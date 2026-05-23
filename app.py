@@ -21,19 +21,52 @@ def load_spot_data():
     df = yf.download("XAUUSD=X", start="2023-01-01", end="2026-12-31")
     return df
 
-# 3. 数据清洗函数：处理 MultiIndex 列
-def extract_column(df, field_name):
+# 3. 数据清洗：处理 MultiIndex 列，转成普通 DataFrame
+def flatten_df(raw_df, price_col_name='close'):
     """
-    从 MultiIndex 列中提取指定字段的 Series。
-    field_name 例如: 'Close', 'High', 'Low', 'Open', 'Volume'
+    把 yfinance 返回的 MultiIndex DataFrame 转成单层的普通 DataFrame。
+    只保留 OHLCV 字段，列名统一为小写。
     """
-    if isinstance(df.columns, pd.MultiIndex):
-        # 列结构: [('Close', 'GC=F'), ('High', 'GC=F'), ...]
-        # 直接取第一层的 field_name
-        return df.xs(field_name, level=0, axis=1)
+    if raw_df.empty:
+        return raw_df
+
+    # 提取各字段的 Series（兼容 MultiIndex 和普通列）
+    if isinstance(raw_df.columns, pd.MultiIndex):
+        close = raw_df.xs('Close', level=0, axis=1)
+        high = raw_df.xs('High', level=0, axis=1)
+        low = raw_df.xs('Low', level=0, axis=1)
+        open_ = raw_df.xs('Open', level=0, axis=1)
+        # Volume 可能不存在（现货有时没有）
+        try:
+            volume = raw_df.xs('Volume', level=0, axis=1)
+        except KeyError:
+            volume = pd.Series(index=raw_df.index, dtype=float)
     else:
-        # 兼容单层列的情况
-        return df[field_name]
+        close = raw_df['Close']
+        high = raw_df['High']
+        low = raw_df['Low']
+        open_ = raw_df['Open']
+        volume = raw_df.get('Volume', pd.Series(index=raw_df.index, dtype=float))
+
+    # 构建干净的 DataFrame
+    clean = pd.DataFrame({
+        'close': close,
+        'high': high,
+        'low': low,
+        'open': open_,
+        'volume': volume
+    }, index=raw_df.index)
+
+    clean.index = pd.to_datetime(clean.index)
+    return clean
+
+# 4. 安全取标量值
+def safe_scalar(series_like):
+    """把 Series 或标量统一转成 Python float"""
+    if isinstance(series_like, (pd.Series, np.ndarray)):
+        val = series_like.item() if hasattr(series_like, 'item') else float(series_like.iloc[0])
+        return float(val)
+    return float(series_like)
 
 try:
     with st.spinner("正在从国际交易所同步最新历史数据..."):
@@ -43,20 +76,20 @@ try:
     if futures_raw.empty and spot_raw.empty:
         st.error("数据源返回空数据，请检查网络或稍后刷新重试。")
     else:
-        # ---- 提取关键字段 ----
-        futures_close = extract_column(futures_raw, 'Close')
-        spot_close = extract_column(spot_raw, 'Close')
+        # ---- 清洗数据 ----
+        futures_df = flatten_df(futures_raw)
+        spot_df = flatten_df(spot_raw)
 
-        # ---- 获取最新价 ----
-        futures_latest = float(futures_close.iloc[-1])
-        futures_prev = float(futures_close.iloc[-2])
+        # ---- 获取最新价（用 values 直接取值） ----
+        futures_latest = safe_scalar(futures_df['close'].iloc[-1])
+        futures_prev = safe_scalar(futures_df['close'].iloc[-2])
         futures_change = (futures_latest - futures_prev) / futures_prev * 100
 
-        spot_latest = float(spot_close.iloc[-1])
-        spot_prev = float(spot_close.iloc[-2])
+        spot_latest = safe_scalar(spot_df['close'].iloc[-1])
+        spot_prev = safe_scalar(spot_df['close'].iloc[-2])
         spot_change = (spot_latest - spot_prev) / spot_prev * 100
 
-        latest_date = futures_close.index[-1].strftime('%Y-%m-%d')
+        latest_date = futures_df.index[-1].strftime('%Y-%m-%d')
 
         # ========== 顶部实时报价卡片 ==========
         st.subheader("📌 实时报价概览")
@@ -78,24 +111,20 @@ try:
         st.markdown("---")
 
         # ========== 核心量化算法（基于 COMEX 期货） ==========
-        # 构建分析专用 DataFrame
-        analysis_df = pd.DataFrame(index=futures_close.index)
-        analysis_df['close'] = futures_close
-
-        analysis_df['daily_gain'] = analysis_df['close'].pct_change(1)
-        analysis_df['weekly_gain'] = analysis_df['close'].pct_change(5)
-        analysis_df['monthly_gain'] = analysis_df['close'].pct_change(21)
-        analysis_df['quarterly_gain'] = analysis_df['close'].pct_change(63)
-        analysis_df['annual_gain'] = analysis_df['close'].pct_change(252)
-        analysis_df['year'] = analysis_df.index.year
+        futures_df['daily_gain'] = futures_df['close'].pct_change(1)
+        futures_df['weekly_gain'] = futures_df['close'].pct_change(5)
+        futures_df['monthly_gain'] = futures_df['close'].pct_change(21)
+        futures_df['quarterly_gain'] = futures_df['close'].pct_change(63)
+        futures_df['annual_gain'] = futures_df['close'].pct_change(252)
+        futures_df['year'] = futures_df.index.year
 
         # ---- 过去1周最大日内涨幅 ----
-        last_week_data = analysis_df.tail(5)
+        last_week_data = futures_df.tail(5)
         max_daily_in_week = last_week_data['daily_gain'].max()
         max_daily_in_week_str = f"{max_daily_in_week * 100:+.2f}%" if pd.notna(max_daily_in_week) else "N/A"
 
-        # ---- 按年份分组，提取各周期最大涨幅 ----
-        summary = analysis_df.groupby('year').agg({
+        # ---- 按年份分组 ----
+        summary = futures_df.groupby('year').agg({
             'daily_gain': 'max',
             'weekly_gain': 'max',
             'monthly_gain': 'max',
@@ -134,12 +163,12 @@ try:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
             st.markdown("**COMEX 黄金期货**")
-            chart_futures = analysis_df.loc[analysis_df.index.year >= 2024, 'close']
+            chart_futures = futures_df.loc[futures_df.index.year >= 2024, 'close']
             st.line_chart(chart_futures)
 
         with col_chart2:
             st.markdown("**伦敦金现货**")
-            chart_spot = spot_close.loc[spot_close.index.year >= 2024]
+            chart_spot = spot_df.loc[spot_df.index.year >= 2024, 'close']
             st.line_chart(chart_spot)
 
         st.info(
@@ -149,4 +178,6 @@ try:
         )
 
 except Exception as e:
+    import traceback
     st.error(f"系统运行或计算异常: {e}")
+    st.code(traceback.format_exc())
