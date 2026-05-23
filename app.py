@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from datetime import datetime
 
 # 1. 网页配置：设置为宽屏模式
@@ -11,43 +12,49 @@ st.caption("数据源：Yahoo Finance 自动同步 | 覆盖 COMEX 期货 + 伦�
 
 # 2. 数据缓存机制：1小时内重复访问直接读内存，防止触发接口限频，完全免费
 
+# ---- 数据清洗辅助函数 ----
+def clean_yf_dataframe(raw_df):
+    """将 yfinance 返回的 DataFrame 统一清洗为单层索引"""
+    df = raw_df.copy()
+    # 如果列索引是多层的，取第一层并转小写
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0].lower() for col in df.columns]
+    else:
+        df.columns = [col.lower() for col in df.columns]
+    df.index = pd.to_datetime(df.index)
+    return df
+
 # ---- 国际期货：COMEX 黄金 ----
 @st.cache_data(ttl=3600)
 def load_futures_data():
     df = yf.download("GC=F", start="2023-01-01", end="2026-12-31")
-    return df
+    if df.empty:
+        return df
+    return clean_yf_dataframe(df)
 
 # ---- 国际现货：伦敦金 ----
 @st.cache_data(ttl=3600)
 def load_spot_data():
     df = yf.download("XAUUSD=X", start="2023-01-01", end="2026-12-31")
-    return df
+    if df.empty:
+        return df
+    return clean_yf_dataframe(df)
 
 try:
     with st.spinner("正在从国际交易所同步最新历史数据..."):
-        futures_raw = load_futures_data()
-        spot_raw = load_spot_data()
+        futures_df = load_futures_data()
+        spot_df = load_spot_data()
 
-    if futures_raw.empty and spot_raw.empty:
+    if futures_df.empty and spot_df.empty:
         st.error("数据源返回空数据，请检查网络或稍后刷新重试。")
     else:
-        # ---- 清洗期货数据 ----
-        futures_df = futures_raw.copy()
-        futures_df.index = pd.to_datetime(futures_df.index)
-
-        # ---- 清洗现货数据 ----
-        spot_df = spot_raw.copy()
-        spot_df.index = pd.to_datetime(spot_df.index)
-
-        # ---- 提取最新价与涨跌幅 ----
-        # COMEX 期货
-        futures_latest = float(futures_df['Close'].iloc[-1])
-        futures_prev = float(futures_df['Close'].iloc[-2])
+        # ---- 获取最新价（修复点：转标量） ----
+        futures_latest = float(futures_df['close'].iloc[-1].item())
+        futures_prev = float(futures_df['close'].iloc[-2].item())
         futures_change = (futures_latest - futures_prev) / futures_prev * 100
 
-        # 伦敦金现货
-        spot_latest = float(spot_df['Close'].iloc[-1])
-        spot_prev = float(spot_df['Close'].iloc[-2])
+        spot_latest = float(spot_df['close'].iloc[-1].item())
+        spot_prev = float(spot_df['close'].iloc[-2].item())
         spot_change = (spot_latest - spot_prev) / spot_prev * 100
 
         latest_date = futures_df.index[-1].strftime('%Y-%m-%d')
@@ -72,25 +79,25 @@ try:
         st.markdown("---")
 
         # ========== 核心量化算法（基于 COMEX 期货） ==========
-        futures_df['Daily_Gain'] = futures_df['Close'].pct_change(1)
-        futures_df['Weekly_Gain'] = futures_df['Close'].pct_change(5)
-        futures_df['Monthly_Gain'] = futures_df['Close'].pct_change(21)
-        futures_df['Quarterly_Gain'] = futures_df['Close'].pct_change(63)
-        futures_df['Annual_Gain'] = futures_df['Close'].pct_change(252)
-        futures_df['Year'] = futures_df.index.year
+        futures_df['daily_gain'] = futures_df['close'].pct_change(1)
+        futures_df['weekly_gain'] = futures_df['close'].pct_change(5)
+        futures_df['monthly_gain'] = futures_df['close'].pct_change(21)
+        futures_df['quarterly_gain'] = futures_df['close'].pct_change(63)
+        futures_df['annual_gain'] = futures_df['close'].pct_change(252)
+        futures_df['year'] = futures_df.index.year
 
         # ---- 过去1周最大日内涨幅 ----
         last_week_data = futures_df.tail(5)
-        max_daily_in_week = last_week_data['Daily_Gain'].max()
+        max_daily_in_week = last_week_data['daily_gain'].max()
         max_daily_in_week_str = f"{max_daily_in_week * 100:+.2f}%" if pd.notna(max_daily_in_week) else "N/A"
 
         # ---- 按年份分组，提取各周期最大涨幅 ----
-        summary = futures_df.groupby('Year').agg({
-            'Daily_Gain': 'max',
-            'Weekly_Gain': 'max',
-            'Monthly_Gain': 'max',
-            'Quarterly_Gain': 'max',
-            'Annual_Gain': 'max'
+        summary = futures_df.groupby('year').agg({
+            'daily_gain': 'max',
+            'weekly_gain': 'max',
+            'monthly_gain': 'max',
+            'quarterly_gain': 'max',
+            'annual_gain': 'max'
         })
 
         summary_pct = (summary * 100).round(2)
@@ -124,12 +131,12 @@ try:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
             st.markdown("**COMEX 黄金期货**")
-            chart_futures = futures_df.loc[futures_df.index.year >= 2024, 'Close']
+            chart_futures = futures_df.loc[futures_df.index.year >= 2024, 'close']
             st.line_chart(chart_futures)
 
         with col_chart2:
             st.markdown("**伦敦金现货**")
-            chart_spot = spot_df.loc[spot_df.index.year >= 2024, 'Close']
+            chart_spot = spot_df.loc[spot_df.index.year >= 2024, 'close']
             st.line_chart(chart_spot)
 
         st.info(
