@@ -21,56 +21,31 @@ def load_spot_data():
     df = yf.download("XAUUSD=X", start="2023-01-01", end="2026-12-31")
     return df
 
-# 3. 数据清洗：处理 MultiIndex 列，转成普通 DataFrame
-def flatten_df(raw_df):
+# 3. 核心函数：从 MultiIndex DataFrame 中提取收盘价 Series
+def get_close_series(raw_df):
     """
-    把 yfinance 返回的 MultiIndex DataFrame 转成单层的普通 DataFrame。
-    所有字段用 .squeeze() 确保是一维 Series。
+    无论 raw_df 是 MultiIndex 列还是普通列，都返回一个干净的收盘价 Series，
+    名称统一为 'close'，索引为 DatetimeIndex。
     """
     if raw_df.empty:
-        return raw_df
-
-    # 辅助函数：安全提取字段并压成一维
-    def get_series(df, field):
-        if isinstance(df.columns, pd.MultiIndex):
-            try:
-                s = df.xs(field, level=0, axis=1)
-            except KeyError:
-                return pd.Series(index=df.index, dtype=float)
-        else:
-            try:
-                s = df[field]
-            except KeyError:
-                return pd.Series(index=df.index, dtype=float)
-        # 关键修复：squeeze() 把 (852, 1) 压成 (852,)
+        return pd.Series(dtype=float, name='close')
+    
+    if isinstance(raw_df.columns, pd.MultiIndex):
+        # 取第一层中名为 'Close' 的所有列（可能只有一个品种代码）
+        s = raw_df.xs('Close', level=0, axis=1)
+        # 如果是 DataFrame（多列），取第一列
         if isinstance(s, pd.DataFrame):
-            s = s.squeeze(axis=1)
-        return s
-
-    close = get_series(raw_df, 'Close')
-    high = get_series(raw_df, 'High')
-    low = get_series(raw_df, 'Low')
-    open_ = get_series(raw_df, 'Open')
-    volume = get_series(raw_df, 'Volume')
-
-    # 构建干净的 DataFrame
-    clean = pd.DataFrame({
-        'close': close,
-        'high': high,
-        'low': low,
-        'open': open_,
-        'volume': volume
-    }, index=raw_df.index)
-
-    clean.index = pd.to_datetime(clean.index)
-    return clean
-
-# 4. 安全取标量值
-def safe_scalar(val):
-    """把任何类型的值转成 Python float"""
-    if isinstance(val, (pd.Series, np.ndarray)):
-        return float(val.item())
-    return float(val)
+            s = s.iloc[:, 0]
+    else:
+        s = raw_df['Close']
+    
+    # 确保是一维 Series
+    if isinstance(s, pd.DataFrame):
+        s = s.squeeze(axis=1)
+    
+    s.name = 'close'
+    s.index = pd.to_datetime(s.index)
+    return s
 
 try:
     with st.spinner("正在从国际交易所同步最新历史数据..."):
@@ -80,20 +55,20 @@ try:
     if futures_raw.empty and spot_raw.empty:
         st.error("数据源返回空数据，请检查网络或稍后刷新重试。")
     else:
-        # ---- 清洗数据 ----
-        futures_df = flatten_df(futures_raw)
-        spot_df = flatten_df(spot_raw)
+        # ---- 提取收盘价 Series ----
+        futures_close = get_close_series(futures_raw)
+        spot_close = get_close_series(spot_raw)
 
-        # ---- 获取最新价 ----
-        futures_latest = safe_scalar(futures_df['close'].iloc[-1])
-        futures_prev = safe_scalar(futures_df['close'].iloc[-2])
+        # ---- 获取最新价（直接用 .values 避免类型问题） ----
+        futures_latest = float(futures_close.values[-1])
+        futures_prev = float(futures_close.values[-2])
         futures_change = (futures_latest - futures_prev) / futures_prev * 100
 
-        spot_latest = safe_scalar(spot_df['close'].iloc[-1])
-        spot_prev = safe_scalar(spot_df['close'].iloc[-2])
+        spot_latest = float(spot_close.values[-1])
+        spot_prev = float(spot_close.values[-2])
         spot_change = (spot_latest - spot_prev) / spot_prev * 100
 
-        latest_date = futures_df.index[-1].strftime('%Y-%m-%d')
+        latest_date = futures_close.index[-1].strftime('%Y-%m-%d')
 
         # ========== 顶部实时报价卡片 ==========
         st.subheader("📌 实时报价概览")
@@ -115,20 +90,33 @@ try:
         st.markdown("---")
 
         # ========== 核心量化算法（基于 COMEX 期货） ==========
-        futures_df['daily_gain'] = futures_df['close'].pct_change(1)
-        futures_df['weekly_gain'] = futures_df['close'].pct_change(5)
-        futures_df['monthly_gain'] = futures_df['close'].pct_change(21)
-        futures_df['quarterly_gain'] = futures_df['close'].pct_change(63)
-        futures_df['annual_gain'] = futures_df['close'].pct_change(252)
-        futures_df['year'] = futures_df.index.year
+        close = futures_close  # 别名，方便阅读
+
+        # 直接用 Series 计算滚动涨跌幅
+        daily_gain = close.pct_change(1)
+        weekly_gain = close.pct_change(5)
+        monthly_gain = close.pct_change(21)
+        quarterly_gain = close.pct_change(63)
+        annual_gain = close.pct_change(252)
+
+        year = close.index.year
 
         # ---- 过去1周最大日内涨幅 ----
-        last_week_data = futures_df.tail(5)
-        max_daily_in_week = last_week_data['daily_gain'].max()
+        max_daily_in_week = daily_gain.tail(5).max()
         max_daily_in_week_str = f"{max_daily_in_week * 100:+.2f}%" if pd.notna(max_daily_in_week) else "N/A"
 
         # ---- 按年份分组 ----
-        summary = futures_df.groupby('year').agg({
+        summary_data = {
+            'daily_gain': daily_gain,
+            'weekly_gain': weekly_gain,
+            'monthly_gain': monthly_gain,
+            'quarterly_gain': quarterly_gain,
+            'annual_gain': annual_gain
+        }
+        summary_df = pd.DataFrame(summary_data, index=close.index)
+        summary_df['year'] = year
+
+        summary = summary_df.groupby('year').agg({
             'daily_gain': 'max',
             'weekly_gain': 'max',
             'monthly_gain': 'max',
@@ -167,12 +155,12 @@ try:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
             st.markdown("**COMEX 黄金期货**")
-            chart_futures = futures_df.loc[futures_df.index.year >= 2024, 'close']
+            chart_futures = close.loc[close.index.year >= 2024]
             st.line_chart(chart_futures)
 
         with col_chart2:
             st.markdown("**伦敦金现货**")
-            chart_spot = spot_df.loc[spot_df.index.year >= 2024, 'close']
+            chart_spot = spot_close.loc[spot_close.index.year >= 2024]
             st.line_chart(chart_spot)
 
         st.info(
