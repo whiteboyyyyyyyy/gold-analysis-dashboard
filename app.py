@@ -22,31 +22,36 @@ def load_spot_data():
     return df
 
 # 3. 数据清洗：处理 MultiIndex 列，转成普通 DataFrame
-def flatten_df(raw_df, price_col_name='close'):
+def flatten_df(raw_df):
     """
     把 yfinance 返回的 MultiIndex DataFrame 转成单层的普通 DataFrame。
-    只保留 OHLCV 字段，列名统一为小写。
+    所有字段用 .squeeze() 确保是一维 Series。
     """
     if raw_df.empty:
         return raw_df
 
-    # 提取各字段的 Series（兼容 MultiIndex 和普通列）
-    if isinstance(raw_df.columns, pd.MultiIndex):
-        close = raw_df.xs('Close', level=0, axis=1)
-        high = raw_df.xs('High', level=0, axis=1)
-        low = raw_df.xs('Low', level=0, axis=1)
-        open_ = raw_df.xs('Open', level=0, axis=1)
-        # Volume 可能不存在（现货有时没有）
-        try:
-            volume = raw_df.xs('Volume', level=0, axis=1)
-        except KeyError:
-            volume = pd.Series(index=raw_df.index, dtype=float)
-    else:
-        close = raw_df['Close']
-        high = raw_df['High']
-        low = raw_df['Low']
-        open_ = raw_df['Open']
-        volume = raw_df.get('Volume', pd.Series(index=raw_df.index, dtype=float))
+    # 辅助函数：安全提取字段并压成一维
+    def get_series(df, field):
+        if isinstance(df.columns, pd.MultiIndex):
+            try:
+                s = df.xs(field, level=0, axis=1)
+            except KeyError:
+                return pd.Series(index=df.index, dtype=float)
+        else:
+            try:
+                s = df[field]
+            except KeyError:
+                return pd.Series(index=df.index, dtype=float)
+        # 关键修复：squeeze() 把 (852, 1) 压成 (852,)
+        if isinstance(s, pd.DataFrame):
+            s = s.squeeze(axis=1)
+        return s
+
+    close = get_series(raw_df, 'Close')
+    high = get_series(raw_df, 'High')
+    low = get_series(raw_df, 'Low')
+    open_ = get_series(raw_df, 'Open')
+    volume = get_series(raw_df, 'Volume')
 
     # 构建干净的 DataFrame
     clean = pd.DataFrame({
@@ -61,12 +66,11 @@ def flatten_df(raw_df, price_col_name='close'):
     return clean
 
 # 4. 安全取标量值
-def safe_scalar(series_like):
-    """把 Series 或标量统一转成 Python float"""
-    if isinstance(series_like, (pd.Series, np.ndarray)):
-        val = series_like.item() if hasattr(series_like, 'item') else float(series_like.iloc[0])
-        return float(val)
-    return float(series_like)
+def safe_scalar(val):
+    """把任何类型的值转成 Python float"""
+    if isinstance(val, (pd.Series, np.ndarray)):
+        return float(val.item())
+    return float(val)
 
 try:
     with st.spinner("正在从国际交易所同步最新历史数据..."):
@@ -80,7 +84,7 @@ try:
         futures_df = flatten_df(futures_raw)
         spot_df = flatten_df(spot_raw)
 
-        # ---- 获取最新价（用 values 直接取值） ----
+        # ---- 获取最新价 ----
         futures_latest = safe_scalar(futures_df['close'].iloc[-1])
         futures_prev = safe_scalar(futures_df['close'].iloc[-2])
         futures_change = (futures_latest - futures_prev) / futures_prev * 100
