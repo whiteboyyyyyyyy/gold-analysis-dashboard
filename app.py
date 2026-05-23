@@ -18,11 +18,32 @@ def load_futures_data():
 
 @st.cache_data(ttl=3600)
 def load_spot_data():
-    # 尝试多个可能的现货代码
-    for symbol in ["XAUUSD=X", "GC=F"]:
-        df = yf.download(symbol, start="2023-01-01", end="2026-12-31")
-        if not df.empty:
-            return df, symbol
+    """
+    尝试多个 Yahoo Finance 伦敦金现货代码，按优先级依次尝试：
+    XAUUSD=X  →  GOLD  →  IAUX  →  GLDA.L
+    返回 (DataFrame, 使用的代码)
+    """
+    spot_symbols = [
+        ("XAUUSD=X", "伦敦金现货"),
+        ("GOLD", "伦敦金现货"),
+        ("IAUX", "伦敦金现货"),
+        ("GLDA.L", "伦敦金现货"),
+    ]
+    
+    for symbol, label in spot_symbols:
+        try:
+            df = yf.download(symbol, start="2023-01-01", end="2026-12-31")
+            if not df.empty and len(df) > 2:
+                # 确认收盘价列有有效数据
+                if isinstance(df.columns, pd.MultiIndex):
+                    close_data = df.xs('Close', level=0, axis=1)
+                else:
+                    close_data = df['Close']
+                if not close_data.empty and close_data.dropna().iloc[-1] > 0:
+                    return df, symbol
+        except Exception:
+            continue
+    
     return pd.DataFrame(), ""
 
 # 3. 核心函数：从 DataFrame 中提取收盘价 Series
@@ -61,7 +82,7 @@ try:
         st.error("❌ COMEX 期货数据不足，无法计算。")
         st.stop()
 
-    # 现货数据处理
+    # ---- 现货数据处理 ----
     spot_available = False
     if not spot_raw.empty:
         spot_close = get_close_series(spot_raw)
@@ -84,7 +105,7 @@ try:
     # ========== 顶部实时报价卡片 ==========
     st.subheader("📌 实时报价概览")
 
-    if spot_available:
+    if spot_available and spot_latest != futures_latest:
         col1, col2 = st.columns(2)
         with col1:
             st.metric(
@@ -99,13 +120,25 @@ try:
                 delta=f"{spot_change:+.2f}% (当日)"
             )
     else:
-        # 只有期货数据时，单独展示
-        st.metric(
-            label="COMEX 黄金期货 (GC=F)",
-            value=f"${futures_latest:,.2f}",
-            delta=f"{futures_change:+.2f}% (当日)"
-        )
-        st.warning("⚠️ 伦敦金现货数据暂时无法获取，仅展示 COMEX 期货数据。现货数据源可能受 Yahoo Finance 限制。")
+        # 现货数据缺失，或与期货数据相同（回退到了GC=F）
+        if spot_available and spot_latest == futures_latest:
+            st.warning("⚠️ 伦敦金现货数据源暂不可用（Yahoo Finance限制），目前仅展示 COMEX 期货数据。")
+        else:
+            st.warning("⚠️ 伦敦金现货数据暂时无法获取，仅展示 COMEX 期货数据。")
+        
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.metric(
+                label="COMEX 黄金期货 (GC=F)",
+                value=f"${futures_latest:,.2f}",
+                delta=f"{futures_change:+.2f}% (当日)"
+            )
+        with col2:
+            st.metric(
+                label="伦敦金现货 (暂不可用)",
+                value="N/A",
+                delta=None
+            )
 
     st.caption(f"数据最新同步交易日 (UTC): {latest_date}")
     st.markdown("---")
@@ -172,7 +205,7 @@ try:
     # ========== 辅助可视化 ==========
     st.subheader("📈 黄金价格历史走势图 (2024 - 2026)")
 
-    if spot_available:
+    if spot_available and spot_latest != futures_latest:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
             st.markdown("**COMEX 黄金期货**")
@@ -192,7 +225,7 @@ try:
         "💡 系统提示：\n"
         "- 周/月/季度涨幅均采用量化滚动窗口（Rolling Window）算法，能完美捕获跨自然月、跨自然周的极端爆发性动量。\n"
         "- 历史涨幅矩阵基于 COMEX 期货主力合约计算，可作为风控回撤的量化基准参考。\n"
-        "- 如现货数据缺失，系统会自动降级为仅展示期货数据，不影响核心看板功能。"
+        "- 伦敦金现货数据受 Yahoo Finance 接口限制，可能暂时不可用，系统会自动降级为仅展示期货数据。"
     )
 
 except Exception as e:
