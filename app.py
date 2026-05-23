@@ -1,130 +1,88 @@
 import streamlit as st
 import yfinance as yf
-import finnhub
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime
 
-# ========== 配置 ==========
-FINNHUB_API_KEY = "d88ncv9r01qq4343sptgd88ncv9r01qq4343spu0"  # 你的 Finnhub API Key
-
+# ========== 网页配置 ==========
 st.set_page_config(page_title="全球金价历史波幅看板", layout="wide", page_icon="🏆")
 
 st.title("🏆 全球黄金多周期历史涨幅与风控边界监控")
-st.caption("数据源：Yahoo Finance (期货) + Finnhub (现货) | 覆盖 COMEX 期货 + 伦敦金现货 + 上海金 | 适合每日收盘盘点")
+st.caption("数据源：Yahoo Finance (期货) + GoldPrice.Today (现货) | COMEX 期货 + 伦敦金现货 + 人民币金价 | 适合每日收盘盘点")
 
-# ========== 1. Finnhub 客户端初始化 ==========
-@st.cache_resource
-def get_finnhub_client():
-    return finnhub.Client(api_key=FINNHUB_API_KEY)
-
-# ========== 2. 数据获取函数 ==========
+# ========== 数据缓存 ==========
 @st.cache_data(ttl=3600)
 def load_futures_data():
     """COMEX 黄金期货 (Yahoo Finance)"""
     df = yf.download("GC=F", start="2023-01-01", end="2026-12-31")
     return df
 
-@st.cache_data(ttl=300)  # 5分钟缓存，现货价格变化快
+@st.cache_data(ttl=300)
 def load_spot_prices():
     """
-    从 Finnhub 获取实时现货报价：
-    - 伦敦金现货 (XAU/USD)
-    - 上海金现货 (以人民币计价的黄金)
+    从 GoldPrice.Today 获取现货价格
+    完全免费，无需 API Key
     """
-    client = get_finnhub_client()
     results = {}
-    
-    # 伦敦金现货
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    # 伦敦金现货 (美元/盎司)
     try:
-        london_quote = client.quote("XAUUSD")
-        if london_quote and london_quote.get('c'):
-            results['london'] = {
-                'price': london_quote['c'],
-                'prev_close': london_quote.get('pc', london_quote['c']),
-                'high': london_quote.get('h'),
-                'low': london_quote.get('l'),
-                'change': london_quote.get('dp', 0)  # 涨跌幅百分比
-            }
+        resp = requests.get("https://data-asg.goldprice.com/dbXRates/USD", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get('items', [])
+            if items:
+                price = items[0].get('xauPrice', 0)
+                if price:
+                    results['london'] = {
+                        'price': float(price),
+                        'currency': 'USD/oz'
+                    }
     except Exception:
         pass
-    
-    # 上海金现货 (使用 OANDA 的人民币计价黄金代码)
+
+    # 人民币金价 (人民币/克)
     try:
-        shanghai_quote = client.quote("OANDA:XAU_CNY")
-        if shanghai_quote and shanghai_quote.get('c'):
-            results['shanghai'] = {
-                'price': shanghai_quote['c'],
-                'prev_close': shanghai_quote.get('pc', shanghai_quote['c']),
-                'high': shanghai_quote.get('h'),
-                'low': shanghai_quote.get('l'),
-                'change': shanghai_quote.get('dp', 0)
-            }
+        resp = requests.get("https://data-asg.goldprice.com/dbXRates/CNY", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get('items', [])
+            if items:
+                price = items[0].get('xauPrice', 0)
+                if price:
+                    results['shanghai'] = {
+                        'price': float(price),
+                        'currency': 'CNY/g'
+                    }
     except Exception:
-        # 备用：尝试其他可能的上海金代码
-        try:
-            shanghai_quote = client.quote("XAU_CNY")
-            if shanghai_quote and shanghai_quote.get('c'):
-                results['shanghai'] = {
-                    'price': shanghai_quote['c'],
-                    'prev_close': shanghai_quote.get('pc', shanghai_quote['c']),
-                    'high': shanghai_quote.get('h'),
-                    'low': shanghai_quote.get('l'),
-                    'change': shanghai_quote.get('dp', 0)
-                }
-        except Exception:
-            pass
-    
+        pass
+
     return results
 
-@st.cache_data(ttl=3600)
-def load_spot_history(symbol, start_date, end_date):
-    """
-    从 Finnhub 获取现货历史K线数据 (用于走势图)
-    symbol: 'XAUUSD' 或 'OANDA:XAU_CNY'
-    """
-    client = get_finnhub_client()
-    try:
-        # Finnhub 要求 Unix 时间戳
-        start_unix = int(datetime.strptime(start_date, '%Y-%m-%d').timestamp())
-        end_unix = int(datetime.strptime(end_date, '%Y-%m-%d').timestamp())
-        
-        candles = client.forex_candles(symbol, 'D', start_unix, end_unix)
-        
-        if candles and candles.get('s') == 'ok':
-            df = pd.DataFrame({
-                'close': candles['c'],
-                'high': candles['h'],
-                'low': candles['l'],
-                'open': candles['o'],
-            }, index=pd.to_datetime(candles['t'], unit='s'))
-            return df
-        else:
-            return pd.DataFrame()
-    except Exception:
-        return pd.DataFrame()
-
-# ========== 3. 辅助函数 ==========
+# ========== 辅助函数 ==========
 def get_close_series(raw_df):
     """从 yfinance DataFrame 提取收盘价 Series"""
     if raw_df.empty:
         return pd.Series(dtype=float, name='close')
-    
+
     if isinstance(raw_df.columns, pd.MultiIndex):
         s = raw_df.xs('Close', level=0, axis=1)
         if isinstance(s, pd.DataFrame):
             s = s.iloc[:, 0]
     else:
         s = raw_df['Close']
-    
+
     if isinstance(s, pd.DataFrame):
         s = s.squeeze(axis=1)
-    
+
     s.name = 'close'
     s.index = pd.to_datetime(s.index)
     return s
 
-# ========== 4. 主程序 ==========
+# ========== 主程序 ==========
 try:
     with st.spinner("正在同步全球金价数据..."):
         futures_raw = load_futures_data()
@@ -136,7 +94,7 @@ try:
 
     # ---- 期货数据处理 ----
     futures_close = get_close_series(futures_raw)
-    
+
     if futures_close.empty or len(futures_close) < 2:
         st.error("❌ COMEX 期货数据不足，无法计算。")
         st.stop()
@@ -164,23 +122,23 @@ try:
             st.metric(
                 label="伦敦金现货 (XAU/USD)",
                 value=f"${ldn['price']:,.2f}",
-                delta=f"{ldn['change']:+.2f}% (实时)" if ldn['change'] else None
+                delta="实时"
             )
         else:
-            st.metric(label="伦敦金现货 (XAU/USD)", value="N/A", delta=None)
+            st.metric(label="伦敦金现货 (XAU/USD)", value="N/A")
 
     with col3:
         if 'shanghai' in spot_prices:
             sha = spot_prices['shanghai']
             st.metric(
-                label="上海金现货 (人民币/克)",
+                label="人民币金价 (CNY/克)",
                 value=f"¥{sha['price']:,.2f}",
-                delta=f"{sha['change']:+.2f}% (实时)" if sha['change'] else None
+                delta="实时"
             )
         else:
-            st.metric(label="上海金现货 (人民币/克)", value="N/A", delta=None)
+            st.metric(label="人民币金价 (CNY/克)", value="N/A")
 
-    st.caption(f"数据同步时间 (UTC): {latest_date}")
+    st.caption(f"期货数据同步交易日 (UTC): {latest_date} | 现货数据源: GoldPrice.Today (每5分钟更新)")
     st.markdown("---")
 
     # ========== 历史波幅矩阵（基于 COMEX 期货） ==========
@@ -191,9 +149,11 @@ try:
     quarterly_gain = close.pct_change(63)
     annual_gain = close.pct_change(252)
 
+    # 过去1周最大日内涨幅
     max_daily_in_week = daily_gain.tail(5).max()
     max_daily_in_week_str = f"{max_daily_in_week * 100:+.2f}%" if pd.notna(max_daily_in_week) else "N/A"
 
+    # 按年份分组
     year = close.index.year
     summary_df = pd.DataFrame({
         'daily_gain': daily_gain,
@@ -227,9 +187,11 @@ try:
     ]
     display_df.index.name = '年份/历史区间'
 
+    # ========== 历史极端波幅矩阵 ==========
     st.subheader("📊 历史年份多周期最大涨幅统计矩阵 (风控基准 · 基于COMEX期货)")
     st.table(display_df)
 
+    # 过去1周最大日内涨幅高亮
     st.metric(
         label="⚡ 过去1周 (最近5个交易日) 最大单日涨幅",
         value=max_daily_in_week_str
@@ -247,18 +209,17 @@ try:
 
     with col_chart2:
         st.markdown("**伦敦金现货**")
-        london_history = load_spot_history('XAUUSD', '2024-01-01', '2026-05-23')
-        if not london_history.empty:
-            st.line_chart(london_history['close'])
-        else:
-            st.info("伦敦金历史走势暂时无法加载")
+        # 从 GoldPrice.Today 拿不到历史数据，用期货走势作参考
+        st.info("💡 现货历史走势与期货高度同步，可参考左图期货走势")
+        chart_futures_copy = close.loc[close.index.year >= 2024]
+        st.line_chart(chart_futures_copy)
 
     st.info(
         "💡 系统提示：\n"
-        "- 周/月/季度涨幅均采用量化滚动窗口算法，捕获跨周期的极端动量。\n"
-        "- 历史涨幅矩阵基于 COMEX 期货，作为风控回撤的量化基准。\n"
-        "- 伦敦金现货和上海金现货由 Finnhub 提供实时报价。\n"
-        "- 上海金现货以人民币/克计价，数据源为 OANDA。"
+        "- 周/月/季度涨幅均采用量化滚动窗口（Rolling Window）算法，捕获跨周期的极端动量。\n"
+        "- 历史涨幅矩阵基于 COMEX 期货主力合约，作为风控回撤的量化基准。\n"
+        "- 伦敦金现货与人民币金价由 GoldPrice.Today 免费提供，每5分钟更新一次。\n"
+        "- 现货与期货价格高度联动，日内涨跌幅规律一致，矩阵数据可通用。"
     )
 
 except Exception as e:
