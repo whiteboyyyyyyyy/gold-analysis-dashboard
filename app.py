@@ -12,7 +12,6 @@ st.caption("数据源：Yahoo Finance 自动同步 | 适合每日收盘盘点与
 # 2. 数据缓存机制：1小时内重复访问直接读内存，防止触发接口限频，完全免费
 @st.cache_data(ttl=3600)
 def load_gold_data():
-    # 调取自2023年开始的数据，确保2024年初计算252日年滚动涨幅时有足够的历史窗口
     df = yf.download("GC=F", start="2023-01-01", end="2026-12-31")
     return df
 
@@ -21,11 +20,15 @@ try:
         raw_df = load_gold_data()
     
     if not raw_df.empty:
-        # 清洗索引
         df = raw_df.copy()
+        
+        # 🌟 核心修复：如果 yfinance 返回了双层列名 (MultiIndex)，强制将其拍平成单层常规列名
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
         df.index = pd.to_datetime(df.index)
         
-        # 3. 提取实时最新收盘状态
+        # 3. 提取实时最新收盘状态（此时 df['Close'] 已经退化为标准的单列 Series）
         latest_price = float(df['Close'].iloc[-1])
         prev_price = float(df['Close'].iloc[-2])
         daily_change = (latest_price - prev_price) / prev_price * 100
@@ -45,7 +48,6 @@ try:
         st.markdown("---")
         
         # 4. 核心量化算法：滚动计算多周期变动率
-        # 交易日标准换算：1日/5日(周)/21日(月)/63日(季)/252日(年)
         df['Daily_Gain'] = df['Close'].pct_change(1)
         df['Weekly_Gain'] = df['Close'].pct_change(5)
         df['Monthly_Gain'] = df['Close'].pct_change(21)
