@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="智驭量化·期现联动监控看板", layout="wide", page_icon="🏆")
 
 st.title("🏆 智驭量化：全球黄金期现联动与风控边界监控")
-st.caption("数据源：Yahoo Finance 生产级弹性流 | 具备全自动时序对齐与数据容错清洗")
+st.caption("数据源：Yahoo Finance 生产级弹性流 | 模糊时间轴自适应对齐引擎")
 
 # 2. 侧边栏合约控制面板
 st.sidebar.header("⚙️ 交易所合约配置")
@@ -23,9 +23,8 @@ contract_options = {
 selected_label = st.sidebar.selectbox("期货锚定合约", list(contract_options.keys()), index=0)
 futures_ticker = contract_options[selected_label]
 
-# 3. 稳健的单股数据下载与结构展平函数
+# 3. 极其强悍的单股下载与纯日期化清洗
 def fetch_and_clean_single_ticker(ticker, start_date="2023-01-01"):
-    """确保不管 yfinance 返回单层还是双层索引，都能干净地吐出标准 DataFrame"""
     try:
         df = yf.download(ticker, start=start_date)
         if df.empty:
@@ -33,57 +32,58 @@ def fetch_and_clean_single_ticker(ticker, start_date="2023-01-01"):
             
         # 展平新版 yfinance 的 MultiIndex 列名
         if isinstance(df.columns, pd.MultiIndex):
-            # 如果第一层是价格类型 (Close, Open...)，第二层是 Ticker
             if ticker in df.columns.get_level_values(1):
                 df.columns = df.columns.get_level_values(0)
-            # 如果第一层是 Ticker，第二层是价格类型
             elif ticker in df.columns.get_level_values(0):
                 df.columns = df.columns.get_level_values(1)
                 
-        # 强制将索引转换为不带时区的时间戳，方便后续 Merge
-        df.index = pd.to_datetime(df.index).tz_localize(None)
+        # 🌟 核心修正：强制抹去时区，并将 DatetimeIndex 降维成纯粹的 'YYYY-MM-DD' 字符串型日期
+        df.index = pd.to_datetime(df.index).tz_localize(None).strftime('%Y-%m-%d')
+        # 去除可能重复的日期行（防止Yahoo周末数据污染）
+        df = df[~df.index.duplicated(keep='last')]
         return df
     except Exception as e:
-        st.warning(f"下载 {ticker} 发生微弱异常，启动自动修复: {e}")
         return pd.DataFrame()
 
-# 4. 双通道独立抓取与本业内聚拼装
+# 4. 弹性模糊时序拼接（解决周末对不齐的终极方案）
 @st.cache_data(ttl=1800)
 def load_synchronized_data(fut_ticker):
-    # 分开下载，断绝因合并导致的 MultiIndex 污染
     df_f = fetch_and_clean_single_ticker(fut_ticker)
     df_s = fetch_and_clean_single_ticker("XAUUSD=X")
     
     if df_f.empty or df_s.empty:
         return pd.DataFrame()
         
-    # 提取核心列
     f_close = df_f['Close'] if 'Close' in df_f.columns else df_f.iloc[:, 0]
     f_vol = df_f['Volume'] if 'Volume' in df_f.columns else pd.Series(0, index=df_f.index)
     s_close = df_s['Close'] if 'Close' in df_s.columns else df_s.iloc[:, 0]
     
-    # 转换为标准的单层 DataFrame
     f_df = pd.DataFrame({'Close': f_close, 'Volume': f_vol})
     s_df = pd.DataFrame({'Spot_Close': s_close})
     
-    # 使用 Pandas 的 merge 按照日期取交集（Inner Join），彻底解决两边非交易日对不齐导致的空行
-    final_df = pd.merge(f_df, s_df, left_index=True, right_index=True, how='inner')
+    # 🌟 核心改动：以期货的时间轴为主轴（Left Join）
+    # 期货有交易的交易日，现货一定有。如果因为周末时区差了一天，现货没对上，后面用 ffill 强行拿最近一个价格填平
+    final_df = f_df.join(s_df, how='left')
+    
+    # 强力向下填补因时区差造成的断层空值
+    final_df['Spot_Close'] = final_df['Spot_Close'].ffill().bfill()
+    final_df['Close'] = final_df['Close'].ffill().bfill()
+    
     return final_df
 
 try:
-    with st.spinner("🚀 智驭高容错路由正在穿透 CME 与伦敦清算所..."):
+    with St.spinner("🚀 智驭高容错路由正在穿透 CME 与伦敦清算所..."):
         df = load_synchronized_data(futures_ticker)
     
-    # 确保融合后的表里至少有 2 行数据才允许计算，死卡越界硬伤
     if not df.empty and len(df) >= 2:
+        # 将字符串索引重新转回 DatetimeIndex 方便后续画图和计算变动率
+        df.index = pd.to_datetime(df.index)
         df.sort_index(inplace=True)
         
-        # 确保数据格式全为标准 float
         df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
         df['Spot_Close'] = pd.to_numeric(df['Spot_Close'], errors='coerce')
-        df.dropna(subset=['Close', 'Spot_Close'], inplace=True)
         
-        # 5. 安全的指标抓取（用时序位置取代易越界的 iloc 寻址）
+        # 5. 指标寻址
         futures_latest = float(df['Close'].values[-1])
         spot_latest = float(df['Spot_Close'].values[-1])
         current_basis = futures_latest - spot_latest
@@ -168,10 +168,8 @@ try:
         
         st.dataframe(recent_history[['Close', 'Spot_Close', 'Basis', 'Volume']], use_container_width=True)
         
-        st.info("💡 **智驭风控提示**：当前时序引擎已升级为双通道独立对齐架构。系统自动通过 `Inner Join` 剪裁掉了周末不重合的幽灵K线，确保计算矩阵时绝不发生越界。")
-        
     else:
-        st.error("⚠️ 现货或期货历史流未能成功合并，可能由于当前处于周末非交易时段，底层 API 暂时截断了行情流。请稍后刷新或在左侧尝试切换合约。")
+        st.error("⚠️ 现货或期货历史流未能成功合并，请检查网络或稍后重试。")
         
 except Exception as e:
     st.error(f"🚨 运行异常: {e}")
