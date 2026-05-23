@@ -1,44 +1,46 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
 
-st.set_page_config(page_title="智驭量化调试台", layout="wide")
-st.title("🏆 智驭量化数据流调试器")
+st.set_page_config(layout="wide")
 
-# 侧边栏：强制合约选择
-contract_ticker = st.sidebar.selectbox("选择合约", ["GCM26.CMX", "GC=F", "GCQ26.CMX"], index=0)
+# 侧边栏：这里只保留绝对有效的流
+ticker = st.sidebar.selectbox("选择基准合约", ["GC=F", "GCQ26.CMX", "GCZ26.CMX"])
 
-# 调试函数：直接打印原始数据形态
-def fetch_raw(ticker):
-    df = yf.download(ticker, period="1mo") # 只抓最近一个月，避免日期过滤太苛刻
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    return df
+@st.cache_data(ttl=600)
+def get_safe_data(f_ticker):
+    # 分别抓取，不搞内联，防止被对方“误杀”
+    df_f = yf.download(f_ticker, period="3mo")
+    df_s = yf.download("XAUUSD=X", period="3mo")
+    
+    # 清洗：只取 Close
+    for df in [df_f, df_s]:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+    
+    # 格式化日期索引，确保能对齐
+    df_f.index = pd.to_datetime(df_f.index).strftime('%Y-%m-%d')
+    df_s.index = pd.to_datetime(df_s.index).strftime('%Y-%m-%d')
+    
+    # 暴力合并：以现货为主轴，期货没有的日期不删，而是留空
+    df_final = pd.concat([df_f['Close'], df_s['Close']], axis=1)
+    df_final.columns = ['Futures', 'Spot']
+    
+    # 填充缺失值：如果期货停盘，拿前一天的期货价补；现货同理
+    df_final = df_final.ffill()
+    return df_final
 
 try:
-    with st.spinner("正在拉取原始数据..."):
-        df_f = fetch_raw(contract_ticker)
-        df_s = fetch_raw("XAUUSD=X")
-        
-        st.write("期货数据头 3 行:", df_f.head(3))
-        st.write("现货数据头 3 行:", df_s.head(3))
-        
-        # 强制将索引转换为标准日期格式
-        df_f.index = pd.to_datetime(df_f.index).strftime('%Y-%m-%d')
-        df_s.index = pd.to_datetime(df_s.index).strftime('%Y-%m-%d')
-        
-        # 合并
-        df_combined = pd.DataFrame({'Futures': df_f['Close'], 'Spot': df_s['Close']})
-        df_combined = df_combined.dropna()
-        
-        st.write("合并后的数据（行数）:", len(df_combined))
-        
-        if len(df_combined) >= 1:
-            st.success("数据获取成功！")
-            st.line_chart(df_combined)
-        else:
-            st.error("数据仍然无法对齐。请检查是否因为合约过期（如GCM26已经进入交割期导致代码失效）。")
-            
+    df = get_safe_data(ticker)
+    
+    st.write(f"当前分析合约: {ticker}")
+    st.write("最近 5 天原始数据流:")
+    st.table(df.tail(5))
+    
+    st.line_chart(df.tail(30))
+    
+    if df['Futures'].iloc[-1] == df['Futures'].iloc[-2]:
+        st.warning("期货数据疑似静止（可能已停盘/交割），请以现货数据为准。")
+
 except Exception as e:
-    st.error(f"捕获到异常: {e}")
+    st.error(f"严重异常: {e}")
