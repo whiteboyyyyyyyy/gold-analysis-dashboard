@@ -26,76 +26,49 @@ def load_futures_data():
 
 @st.cache_data(ttl=300)
 def load_spot_realtime_alltick():
-    """
-    从 AllTick 获取伦敦金现货实时报价
-    接口: https://quote.alltick.co/quote-b-api/quote
-    """
+    """从 AllTick 获取伦敦金现货实时报价"""
     results = {}
 
-    # 1. 获取 XAUUSD 实时报价
-    query_xau = {
-        "trace": "gold_spot_realtime",
-        "data": {
-            "code": "XAUUSD"
-        }
-    }
     url = "https://quote.alltick.co/quote-b-api/quote"
-    params = {
-        "token": ALLTICK_TOKEN,
-        "query": json.dumps(query_xau)
-    }
+
+    # 1. XAUUSD 实时报价
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        query = {"trace": "realtime", "data": {"code": "XAUUSD"}}
+        resp = requests.get(url, params={"token": ALLTICK_TOKEN, "query": json.dumps(query)}, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             if data.get('msg') == 'ok':
                 quote = data.get('data', {})
-                if quote:
-                    price = quote.get('price', 0)
-                    prev_close = quote.get('pre_close', price)
-                    if price and float(price) > 0:
-                        results['london'] = {
-                            'price': float(price),
-                            'prev_close': float(prev_close) if prev_close else float(price),
-                            'currency': 'USD/oz'
-                        }
+                price = float(quote.get('price', 0))
+                prev_close = float(quote.get('pre_close', price))
+                if price > 0:
+                    results['london'] = {'price': price, 'prev_close': prev_close}
     except Exception:
         pass
 
-    # 2. 获取 USD/CNY 汇率
-    query_cny = {
-        "trace": "usdcny_rate",
-        "data": {
-            "code": "USDCNY"
-        }
-    }
-    try:
-        resp = requests.get(url, params={"token": ALLTICK_TOKEN, "query": json.dumps(query_cny)}, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get('msg') == 'ok':
-                quote = data.get('data', {})
-                if quote:
-                    usd_cny = float(quote.get('price', 0))
-                    if usd_cny > 0 and 'london' in results:
+    # 2. USDCNY 汇率
+    if 'london' in results:
+        try:
+            query = {"trace": "rate", "data": {"code": "USDCNY"}}
+            resp = requests.get(url, params={"token": ALLTICK_TOKEN, "query": json.dumps(query)}, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get('msg') == 'ok':
+                    rate = float(data.get('data', {}).get('price', 0))
+                    if rate > 0:
                         results['shanghai'] = {
-                            'price': (results['london']['price'] * usd_cny) / 31.1035,
-                            'currency': 'CNY/g'
+                            'price': (results['london']['price'] * rate) / 31.1035
                         }
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return results
 
 
 @st.cache_data(ttl=3600)
 def load_spot_history_alltick():
-    """
-    从 AllTick 获取伦敦金现货历史日K线
-    代码: GOLD, kline_type: 8 (日K)
-    """
-    end_date = datetime.now()
-    end_unix = int(end_date.timestamp())
+    """从 AllTick 获取伦敦金现货近1年历史日K线"""
+    end_unix = int(datetime.now().timestamp())
 
     query_data = {
         "trace": "gold_dashboard",
@@ -103,16 +76,13 @@ def load_spot_history_alltick():
             "code": "GOLD",
             "kline_type": 8,
             "kline_timestamp_end": end_unix,
-            "query_kline_num": 800,
+            "query_kline_num": 260,  # 1年约250个交易日
             "adjust_type": 0
         }
     }
 
     url = "https://quote.alltick.co/quote-b-api/kline"
-    params = {
-        "token": ALLTICK_TOKEN,
-        "query": json.dumps(query_data)
-    }
+    params = {"token": ALLTICK_TOKEN, "query": json.dumps(query_data)}
 
     try:
         resp = requests.get(url, params=params, timeout=15)
@@ -125,6 +95,10 @@ def load_spot_history_alltick():
                     df['timestamp'] = pd.to_datetime(df['timestamp'].astype(int), unit='s')
                     df.set_index('timestamp', inplace=True)
                     df.sort_index(inplace=True)
+                    # 转换数值列
+                    for col in ['open_price', 'close_price', 'high_price', 'low_price']:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
                     df.rename(columns={
                         'open_price': 'open',
                         'close_price': 'close',
@@ -155,6 +129,7 @@ def get_close_series(raw_df):
     if isinstance(s, pd.DataFrame):
         s = s.squeeze(axis=1)
 
+    s = pd.to_numeric(s, errors='coerce')
     s.name = 'close'
     s.index = pd.to_datetime(s.index)
     return s
@@ -162,15 +137,16 @@ def get_close_series(raw_df):
 
 def compute_wave_matrix(price_series):
     """计算多周期最大涨幅矩阵"""
-    close = price_series.dropna()
-    if len(close) < 252:
+    close = price_series.dropna().astype(float)
+    if len(close) < 5:
         return pd.DataFrame(), "N/A"
 
     daily_gain = close.pct_change(1)
     weekly_gain = close.pct_change(5)
     monthly_gain = close.pct_change(21)
     quarterly_gain = close.pct_change(63)
-    annual_gain = close.pct_change(252)
+    # 年度涨幅需要252天数据
+    annual_gain = close.pct_change(252) if len(close) >= 252 else pd.Series(index=close.index, dtype=float)
 
     year = close.index.year
     summary_df = pd.DataFrame({
@@ -236,9 +212,10 @@ try:
 
     # ---- 现货历史数据 ----
     spot_has_history = False
+    spot_close = None
     if not spot_history.empty and 'close' in spot_history.columns:
-        spot_close_alltick = spot_history['close'].dropna()
-        if len(spot_close_alltick) >= 252:
+        spot_close = spot_history['close'].dropna().astype(float)
+        if len(spot_close) >= 5:
             spot_has_history = True
 
     # ========== 实时报价卡片 ==========
@@ -256,7 +233,6 @@ try:
     with col2:
         if 'london' in spot_prices:
             ldn = spot_prices['london']
-            # 计算涨跌幅
             pct = (ldn['price'] - ldn['prev_close']) / ldn['prev_close'] * 100 if ldn['prev_close'] else 0
             st.metric(
                 label="伦敦金现货 (XAU/USD)",
@@ -268,10 +244,9 @@ try:
 
     with col3:
         if 'shanghai' in spot_prices:
-            sha = spot_prices['shanghai']
             st.metric(
                 label="上海金参考价 (CNY/克)",
-                value=f"¥{sha['price']:,.2f}",
+                value=f"¥{spot_prices['shanghai']['price']:,.2f}",
                 delta="实时换算"
             )
         else:
@@ -292,22 +267,22 @@ try:
     st.markdown("---")
 
     # ========== 表2：伦敦金现货 ==========
-    st.subheader("📊 表2：伦敦金现货 (XAU/USD) — 历史多周期最大涨幅矩阵")
+    st.subheader("📊 表2：伦敦金现货 (XAU/USD) — 历史多周期最大涨幅矩阵 (近1年)")
     if spot_has_history:
-        spot_matrix, spot_week_max = compute_wave_matrix(spot_close_alltick)
+        spot_matrix, spot_week_max = compute_wave_matrix(spot_close)
         if not spot_matrix.empty:
             st.table(spot_matrix)
             st.metric(label="⚡ 伦敦金现货 · 过去1周最大单日涨幅", value=spot_week_max)
         else:
             st.warning("现货历史数据不足")
     else:
-        st.warning("⚠️ AllTick 历史K线不足252天，请稍后刷新重试。")
+        st.warning("⚠️ AllTick 实时报价接口暂不可用，请稍后刷新。")
 
     st.markdown("---")
 
     # ========== 表3：上海金 ==========
     st.subheader("📊 表3：上海金参考价 (CNY/克) — 历史多周期最大涨幅矩阵")
-    st.info("💡 上海金价格 = 国际金价 × USD/CNY汇率 ÷ 31.1035。涨跌幅百分比与国际金价完全一致，请直接参考表2伦敦金现货的涨跌幅数据。")
+    st.info("💡 上海金涨跌幅与国际金价一致，请参考表2伦敦金现货的涨跌幅百分比。")
 
     st.markdown("---")
 
@@ -321,20 +296,19 @@ try:
         st.line_chart(futures_close.loc[futures_close.index.year >= 2024])
 
     with col_chart2:
-        st.markdown("**伦敦金现货**")
+        st.markdown("**伦敦金现货 (近1年)**")
         if spot_has_history:
-            st.line_chart(spot_close_alltick.loc[spot_close_alltick.index.year >= 2024])
+            st.line_chart(spot_close)
         else:
-            st.info("💡 等待历史K线加载")
+            st.info("💡 等待数据加载")
             st.line_chart(futures_close.loc[futures_close.index.year >= 2024])
 
     st.info(
         "💡 系统提示：\n"
         "- 所有涨幅均采用滚动窗口算法。\n"
-        "- 表1 COMEX期货基于 Yahoo Finance 数据。\n"
-        "- 表2 伦敦金现货基于 AllTick 历史日K线 (代码 GOLD)。\n"
-        "- 表3 上海金涨跌幅与国际金价一致，复用表2百分比。\n"
-        "- 全部现货数据均来自 AllTick，无需额外 API。"
+        "- 表1 COMEX期货基于 Yahoo Finance（覆盖2024-2026）。\n"
+        "- 表2 伦敦金现货基于 AllTick 近1年日K线（免费版限制1年）。\n"
+        "- 表3 上海金涨跌幅复用现货矩阵。"
     )
 
 except Exception as e:
