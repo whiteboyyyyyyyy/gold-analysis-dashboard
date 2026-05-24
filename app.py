@@ -126,16 +126,40 @@ def show_latest_metrics(latest, label, currency="$"):
     with col_close: st.metric(label=f"{label} 收市價", value=f"{currency}{latest['收市']:,.2f}")
     with col_change: st.metric(label=f"{label} 當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
 
-def show_latest_metrics_sge(latest, rate):
-    col_date, col_close_cny, col_close_usd, col_change = st.columns(4)
+def show_latest_metrics_sge(latest, rate, spot_latest_price):
+    """顯示上海金最新報價（含換算和對國際金溢價，並加顏色）"""
     usd_price = cny_per_gram_to_usd_per_ounce(latest['收市'], rate)
-    # 計算對國際金溢價
-    latest_spot = spot_daily.iloc[0]
-    premium_pct = ((usd_price - latest_spot['收市']) / latest_spot['收市'] * 100) if latest_spot['收市'] else 0
-    with col_date: st.metric(label="上海金現貨 最新交易日", value=format_date(latest['日期']))
-    with col_close_cny: st.metric(label="收市價 (CNY/克)", value=f"¥{latest['收市']:,.2f}")
-    with col_close_usd: st.metric(label=f"換算 (USD/盎司) @ {rate:.4f}", value=f"${usd_price:,.2f} (對國際金 {premium_pct:+.2f}%)")
-    with col_change: st.metric(label="當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+    premium_pct = ((usd_price - spot_latest_price) / spot_latest_price * 100) if spot_latest_price else 0
+
+    # 溢價顏色
+    if premium_pct > 0:
+        premium_color = "#22C55E"  # 綠色：上海金溢價
+    elif premium_pct < 0:
+        premium_color = "#EF4444"  # 紅色：上海金折價
+    else:
+        premium_color = "#9CA3AF"  # 灰色
+
+    col_date, col_cny, col_usd, col_premium, col_change = st.columns([1.2, 1, 1, 1, 0.8])
+
+    with col_date:
+        st.metric(label="最新交易日", value=format_date(latest['日期']))
+    with col_cny:
+        st.metric(label="收市價 (CNY/克)", value=f"¥{latest['收市']:,.2f}")
+    with col_usd:
+        st.metric(label=f"換算 USD/盎司", value=f"${usd_price:,.2f}")
+    with col_premium:
+        st.markdown(f"""
+        <div style="margin-top: 8px;">
+            <span style="font-size: 0.75rem; color: #9CA3AF;">對國際金</span><br>
+            <span style="font-size: 1.5rem; font-weight: 700; color: {premium_color};">{premium_pct:+.2f}%</span>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_change:
+        st.metric(label="當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+
+    # 匯率小字
+    st.caption(f"💱 換算匯率: USD/CNY = {rate:.4f} | 國際金參考價: ${spot_latest_price:,.2f}/盎司")
+
 
 def show_max_gain_loss_section(label, periods):
     st.subheader(f"📊 {label} — 最大漲跌幅總覽")
@@ -176,24 +200,20 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
         with tab:
             st.caption(f"上海金現貨 {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 括號內為換算USD/盎司及對國際金%差距 | 由新至舊排列")
 
-            # 計算每一筆的匯率
             rates_info = df['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
             df['換算匯率'] = rates_info.apply(lambda x: x[0])
             df['匯率來源'] = rates_info.apply(lambda x: x[1])
 
-            # 建立國際金查詢字典
             spot_dict = spot_daily_df.set_index('日期')['收市'].to_dict()
 
             display = df.copy()
             display['日期_str'] = display['日期'].dt.strftime('%Y-%m-%d')
 
             def build_price_cell(price_cny, date_obj, rate):
-                """建立價格儲存格：CNY價格 (USD換算, 對國際金%)"""
                 usd = cny_per_gram_to_usd_per_ounce(price_cny, rate)
-                # 找對應日期的國際金價
                 spot_price = None
                 check_date = date_obj
-                for _ in range(5):  # 往前找最多5天
+                for _ in range(5):
                     spot_price = spot_dict.get(check_date)
                     if spot_price is not None:
                         break
@@ -204,18 +224,10 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
                 else:
                     return f"¥{price_cny:,.2f} (${usd:,.2f})"
 
-            display['收市'] = display.apply(
-                lambda row: build_price_cell(row['收市'], row['日期'], row['換算匯率']), axis=1
-            )
-            display['開市'] = display.apply(
-                lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1
-            )
-            display['高'] = display.apply(
-                lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1
-            )
-            display['低'] = display.apply(
-                lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1
-            )
+            display['收市'] = display.apply(lambda row: build_price_cell(row['收市'], row['日期'], row['換算匯率']), axis=1)
+            display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1)
+            display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1)
+            display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1)
             display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
             display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
             display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
@@ -223,9 +235,7 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             st.dataframe(
                 display[['日期_str', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源']],
                 use_container_width=True, hide_index=True, height=500,
-                column_config={
-                    '日期_str': '日期',
-                }
+                column_config={'日期_str': '日期'}
             )
 
             historical_count = display['匯率來源'].str.contains('歷史匯率').sum()
@@ -261,6 +271,7 @@ def get_common_weekly(sge_w, spot_w):
 
 st.header("📌 最新報價")
 
+# COMEX 期貨
 col_futures, col_futures_session = st.columns([3, 1])
 with col_futures:
     st.markdown("### COMEX 黃金期貨")
@@ -276,6 +287,7 @@ with col_futures_session:
 
 st.markdown("---")
 
+# 倫敦金現貨
 col_spot, col_spot_session = st.columns([3, 1])
 with col_spot:
     st.markdown("### 倫敦金現貨 (XAU/USD)")
@@ -291,10 +303,11 @@ with col_spot_session:
 
 st.markdown("---")
 
+# 上海金現貨
 col_sge, col_sge_session = st.columns([3, 1])
 with col_sge:
     st.markdown("### 上海金現貨 (Au99.99)")
-    show_latest_metrics_sge(sge_daily.iloc[0], current_rate)
+    show_latest_metrics_sge(sge_daily.iloc[0], current_rate, spot_daily.iloc[0]['收市'])
 with col_sge_session:
     st.markdown("### 🕐 交易時段")
     st.markdown("""
@@ -306,6 +319,7 @@ with col_sge_session:
 
 st.markdown("---")
 
+# ============================================================
 st.header("📊 最大漲跌幅總覽")
 
 show_max_gain_loss_section("COMEX 黃金期貨", [
@@ -326,6 +340,7 @@ show_max_gain_loss_section("上海金現貨 (Au99.99)", [
 ])
 st.markdown("---")
 
+# ============================================================
 st.header("📋 完整歷史數據")
 
 show_data_tabs({"日線": futures_daily, "週線": futures_weekly, "月線": futures_monthly}, "COMEX 黃金期貨", "$", "Investing.com")
@@ -335,6 +350,7 @@ st.markdown("---")
 show_data_tabs_sge({"日線": sge_daily, "週線": sge_weekly}, current_rate, spot_daily)
 st.markdown("---")
 
+# ============================================================
 st.header("📈 收市價走勢圖（只顯示共同交易日的數據）")
 
 st.subheader("COMEX 黃金期貨 vs 倫敦金現貨 (XAU/USD)")
