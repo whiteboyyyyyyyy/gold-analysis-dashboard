@@ -140,17 +140,16 @@ def show_data_tabs_sge(data_dict):
             )
 
 def get_common_dates(df1, df2):
-    """只取兩個 DataFrame 都有的日期"""
+    """只取兩個 DataFrame 都有的日期，返回兩個 Series"""
     s1 = df1.set_index('日期')['收市']
     s2 = df2.set_index('日期')['收市']
     common = s1.index.intersection(s2.index)
     return s1.loc[common], s2.loc[common]
 
-def plot_comparison(df1, df2, label1, label2):
-    """畫只取共同日期的對比圖"""
-    s1, s2 = get_common_dates(df1, df2)
-    result = pd.DataFrame({label1: s1, label2: s2}).sort_index()
-    return result
+def get_common_dates_by_series(s1, s2):
+    """只取兩個 Series 都有的日期"""
+    common = s1.index.intersection(s2.index)
+    return s1.loc[common], s2.loc[common]
 
 
 # ============================================================
@@ -217,7 +216,7 @@ show_data_tabs_sge({"日線": sge_daily, "週線": sge_weekly})
 st.markdown("---")
 
 # ============================================================
-# 第四部分：走勢圖
+# 第四部分：走勢圖（只顯示共同交易日）
 # ============================================================
 st.header("📈 收市價走勢圖（只顯示共同交易日的數據）")
 
@@ -226,45 +225,36 @@ st.subheader("COMEX 黃金期貨 vs 倫敦金現貨 (XAU/USD)")
 c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown("**日線對比**")
-    chart = plot_comparison(futures_daily, spot_daily, 'COMEX 期貨', '倫敦金現貨')
-    st.line_chart(chart, color=["#FF6B35", "#004E89"])
+    s1, s2 = get_common_dates(futures_daily, spot_daily)
+    st.line_chart(pd.DataFrame({'COMEX 期貨': s1, '倫敦金現貨': s2}).sort_index(), color=["#FF6B35", "#004E89"])
 with c2:
     st.markdown("**週線對比**")
-    chart = plot_comparison(futures_weekly, spot_weekly, 'COMEX 期貨', '倫敦金現貨')
-    st.line_chart(chart, color=["#FF6B35", "#004E89"])
+    s1, s2 = get_common_dates(futures_weekly, spot_weekly)
+    st.line_chart(pd.DataFrame({'COMEX 期貨': s1, '倫敦金現貨': s2}).sort_index(), color=["#FF6B35", "#004E89"])
 with c3:
     st.markdown("**月線對比**")
-    chart = plot_comparison(futures_monthly, spot_monthly, 'COMEX 期貨', '倫敦金現貨')
-    st.line_chart(chart, color=["#FF6B35", "#004E89"])
+    s1, s2 = get_common_dates(futures_monthly, spot_monthly)
+    st.line_chart(pd.DataFrame({'COMEX 期貨': s1, '倫敦金現貨': s2}).sort_index(), color=["#FF6B35", "#004E89"])
 
 st.markdown("---")
 
 # ---- 上海金(換算USD) vs 倫敦金 ----
 st.subheader("上海金現貨 (換算 USD/盎司) vs 倫敦金現貨")
-# 建立上海金 USD 換算版本
-sge_daily_usd = sge_daily.copy()
-sge_daily_usd['收市_USD'] = sge_daily_usd['收市'].apply(cny_per_gram_to_usd_per_ounce)
-sge_weekly_usd = sge_weekly.copy()
-sge_weekly_usd['收市_USD'] = sge_weekly_usd['收市'].apply(cny_per_gram_to_usd_per_ounce)
+
+sge_daily_usd = sge_daily.set_index('日期')['收市'].apply(cny_per_gram_to_usd_per_ounce)
+sge_weekly_usd = sge_weekly.set_index('日期')['收市'].apply(cny_per_gram_to_usd_per_ounce)
+spot_daily_s = spot_daily.set_index('日期')['收市']
+spot_weekly_s = spot_weekly.set_index('日期')['收市']
 
 d1, d2 = st.columns(2)
 with d1:
     st.markdown("**日線對比**")
-    s1, s2 = get_common_dates_by_series(
-        sge_daily_usd.set_index('日期')['收市_USD'],
-        spot_daily.set_index('日期')['收市']
-    )
-    chart = pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨 (USD/盎司)': s2}).sort_index()
-    st.line_chart(chart, color=["#E63946", "#004E89"])
-
+    s1, s2 = get_common_dates_by_series(sge_daily_usd, spot_daily_s)
+    st.line_chart(pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
 with d2:
     st.markdown("**週線對比**")
-    s1, s2 = get_common_dates_by_series(
-        sge_weekly_usd.set_index('日期')['收市_USD'],
-        spot_weekly.set_index('日期')['收市']
-    )
-    chart = pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨 (USD/盎司)': s2}).sort_index()
-    st.line_chart(chart, color=["#E63946", "#004E89"])
+    s1, s2 = get_common_dates_by_series(sge_weekly_usd, spot_weekly_s)
+    st.line_chart(pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
 
 st.markdown("---")
 
