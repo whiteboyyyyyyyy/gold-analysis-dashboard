@@ -63,7 +63,6 @@ def cny_per_gram_to_usd_per_ounce(price_cny, rate):
 
 # ========== 通用格式化函數 ==========
 def fmt_pct(val):
-    """格式化百分比，正數前面加🟢，負數前面加🔴"""
     if val > 0:
         return f"🟢 +{val:.2f}%"
     elif val < 0:
@@ -72,7 +71,6 @@ def fmt_pct(val):
         return f"  {val:.2f}%"
 
 def fmt_pct_plain(val):
-    """格式化百分比，正數前面加🟢，負數前面加🔴（無加號）"""
     if val > 0:
         return f"🟢 {val:+.2f}%"
     elif val < 0:
@@ -80,17 +78,7 @@ def fmt_pct_plain(val):
     else:
         return f"  {val:.2f}%"
 
-def fmt_num_with_sign(val):
-    """格式化數字，正數加+號和🟢，負數加🔴"""
-    if val > 0:
-        return f"🟢 +{val:.2f}"
-    elif val < 0:
-        return f"🔴 {val:.2f}"
-    else:
-        return f"  {val:.2f}"
-
 def fmt_pct_delta(val, include_color=True):
-    """格式化漲跌幅用於 delta，正數加🟢，負數加🔴"""
     if include_color:
         if val > 0:
             return f"🟢 +{val:.2f}%"
@@ -170,9 +158,13 @@ def show_latest_metrics(latest, label, currency="$"):
     with col_close: st.metric(label=f"{label} 收市價", value=f"{currency}{latest['收市']:,.2f}")
     with col_change: st.metric(label=f"{label} 當日漲跌幅", value=fmt_pct_delta(latest['升跌（%）'], include_color=False))
 
-def show_latest_metrics_sge(latest, rate, spot_latest_price):
-    """顯示上海金最新報價（含換算和對國際金溢價，並加顏色）"""
-    usd_price = cny_per_gram_to_usd_per_ounce(latest['收市'], rate)
+def show_latest_metrics_sge(latest, spot_latest_price):
+    """顯示上海金最新報價，使用最新交易日的歷史匯率"""
+    # 用最新交易日獲取歷史匯率
+    latest_date = latest['日期']
+    sge_rate, sge_rate_source = get_rate_for_date(latest_date, current_rate)
+
+    usd_price = cny_per_gram_to_usd_per_ounce(latest['收市'], sge_rate)
     premium_pct = ((usd_price - spot_latest_price) / spot_latest_price * 100) if spot_latest_price else 0
 
     if premium_pct > 0:
@@ -185,7 +177,7 @@ def show_latest_metrics_sge(latest, rate, spot_latest_price):
     col_date, col_cny, col_usd, col_premium, col_change = st.columns([1.2, 1, 1, 1, 0.8])
 
     with col_date:
-        st.metric(label="最新交易日", value=format_date(latest['日期']))
+        st.metric(label="最新交易日", value=format_date(latest_date))
     with col_cny:
         st.metric(label="收市價 (CNY/克)", value=f"¥{latest['收市']:,.2f}")
     with col_usd:
@@ -200,7 +192,13 @@ def show_latest_metrics_sge(latest, rate, spot_latest_price):
     with col_change:
         st.metric(label="當日漲跌幅", value=fmt_pct_delta(latest['升跌（%）'], include_color=False))
 
-    st.caption(f"💱 換算匯率: USD/CNY = {rate:.4f} | 國際金參考價: ${spot_latest_price:,.2f}/盎司")
+    # 顯示匯率來源
+    if sge_rate_source == "歷史匯率":
+        rate_label = f"🔵 {sge_rate_source}"
+    else:
+        rate_label = f"🟡 {sge_rate_source}"
+
+    st.caption(f"💱 換算匯率: USD/CNY = {sge_rate:.4f} ({rate_label}) | 國際金參考價: ${spot_latest_price:,.2f}/盎司")
 
 
 def show_max_gain_loss_section(label, periods):
@@ -346,11 +344,11 @@ with col_spot_session:
 
 st.markdown("---")
 
-# 上海金現貨
+# 上海金現貨 — 使用當日歷史匯率
 col_sge, col_sge_session = st.columns([3, 1])
 with col_sge:
     st.markdown("### 上海金現貨 (Au99.99)")
-    show_latest_metrics_sge(sge_daily.iloc[0], current_rate, spot_daily.iloc[0]['收市'])
+    show_latest_metrics_sge(sge_daily.iloc[0], spot_daily.iloc[0]['收市'])
 with col_sge_session:
     st.markdown("### 🕐 交易時段")
     st.markdown("""
