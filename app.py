@@ -61,19 +61,6 @@ def cny_per_gram_to_usd_per_ounce(price_cny, rate):
         return 0
     return (price_cny * OUNCE_TO_GRAM) / rate
 
-def color_pct(val_str):
-    """為漲跌幅字串加顏色"""
-    try:
-        val = float(val_str.replace('%', '').replace('+', ''))
-        if val > 0:
-            return f'<span style="color:#22C55E;font-weight:600;">{val_str}</span>'
-        elif val < 0:
-            return f'<span style="color:#EF4444;font-weight:600;">{val_str}</span>'
-        else:
-            return f'<span style="color:#9CA3AF;font-weight:600;">{val_str}</span>'
-    except:
-        return val_str
-
 def color_metric_delta(delta_val):
     """為 st.metric 的 delta 值加顏色"""
     if delta_val > 0:
@@ -196,6 +183,7 @@ def show_max_gain_loss_section(label, periods):
             st.metric(label=f"▼ 最大跌幅 ({format_date(loss_date)})", value=color_metric_delta(loss))
 
 def show_data_tabs(data_dict, label, currency="$", source=""):
+    """顯示國際金價數據分頁"""
     st.subheader(f"📋 {label} — 完整歷史數據")
     st.caption(f"📡 數據來源：{source}")
     tab_labels = list(data_dict.keys())
@@ -205,44 +193,22 @@ def show_data_tabs(data_dict, label, currency="$", source=""):
             st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：{source} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
-            # 使用 st.dataframe 顯示，column_config 可以自定義顏色
-            display['升跌_str'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
             display['收市'] = display['收市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['開市'] = display['開市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['高'] = display['高'].apply(lambda x: f"{currency}{x:,.2f}")
             display['低'] = display['低'].apply(lambda x: f"{currency}{x:,.2f}")
+            display['漲跌幅'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
             
-            # 為了顏色，使用 to_html 但加入樣式確保全寬
-            html = display[['日期', '收市', '開市', '高', '低', '升跌_str']].to_html(
-                index=False, escape=False,
-                classes='dataframe-table',
-                header=['日期', '收市', '開市', '高', '低', '升跌（%）']
+            # 使用 st.dataframe 顯示，用 column_config 配置顏色
+            st.dataframe(
+                display[['日期', '收市', '開市', '高', '低', '漲跌幅']],
+                use_container_width=True,
+                hide_index=True,
+                height=500
             )
-            # 加入 CSS 讓表格全寬
-            styled_html = f"""
-            <style>
-            .dataframe-table {{
-                width: 100%;
-                border-collapse: collapse;
-            }}
-            .dataframe-table th {{
-                text-align: left;
-                padding: 8px;
-                background-color: #f0f2f6;
-                font-weight: 600;
-            }}
-            .dataframe-table td {{
-                text-align: left;
-                padding: 8px;
-                border-bottom: 1px solid #e0e0e0;
-            }}
-            </style>
-            {html}
-            """
-            st.write(styled_html, unsafe_allow_html=True)
 
 def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
-    """上海金數據表：括號內附換算USD及對國際金%差距，漲跌幅有顏色"""
+    """上海金數據表：括號內附換算USD及對國際金%差距"""
     st.subheader("📋 上海金現貨 (Au99.99) — 完整歷史數據")
     st.caption("📡 數據來源：上海黃金交易所")
     tab_labels = list(data_dict.keys())
@@ -258,7 +224,7 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             spot_dict = spot_daily_df.set_index('日期')['收市'].to_dict()
 
             display = df.copy()
-            display['日期_str'] = display['日期'].dt.strftime('%Y-%m-%d')
+            display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
 
             def build_price_cell(price_cny, date_obj, rate):
                 usd = cny_per_gram_to_usd_per_ounce(price_cny, rate)
@@ -272,12 +238,12 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
                 if spot_price:
                     premium = (usd - spot_price) / spot_price * 100
                     if premium > 0:
-                        pct_color = "#22C55E"
+                        pct_sign = "▲"
                     elif premium < 0:
-                        pct_color = "#EF4444"
+                        pct_sign = "▼"
                     else:
-                        pct_color = "#9CA3AF"
-                    return f"¥{price_cny:,.2f} (${usd:,.2f}, <span style='color:{pct_color};font-weight:600;'>{premium:+.2f}%</span>)"
+                        pct_sign = ""
+                    return f"¥{price_cny:,.2f} (${usd:,.2f}, {pct_sign}{premium:+.2f}%)"
                 else:
                     return f"¥{price_cny:,.2f} (${usd:,.2f})"
 
@@ -285,36 +251,16 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1)
             display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1)
             display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1)
-            display['升跌（%）_fmt'] = display['升跌（%）'].apply(lambda x: color_pct(f"{x:+.2f}%"))
+            display['漲跌幅'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
             display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
             display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
 
-            html = display[['日期_str', '收市', '開市', '高', '低', '升跌（%）_fmt', '換算匯率', '匯率來源']].to_html(
-                index=False, escape=False,
-                header=['日期', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源'],
-                classes='dataframe-table'
+            st.dataframe(
+                display[['日期', '收市', '開市', '高', '低', '漲跌幅', '換算匯率', '匯率來源']],
+                use_container_width=True,
+                hide_index=True,
+                height=500
             )
-            styled_html = f"""
-            <style>
-            .dataframe-table {{
-                width: 100%;
-                border-collapse: collapse;
-            }}
-            .dataframe-table th {{
-                text-align: left;
-                padding: 8px;
-                background-color: #f0f2f6;
-                font-weight: 600;
-            }}
-            .dataframe-table td {{
-                text-align: left;
-                padding: 8px;
-                border-bottom: 1px solid #e0e0e0;
-            }}
-            </style>
-            {html}
-            """
-            st.write(styled_html, unsafe_allow_html=True)
 
             historical_count = display['匯率來源'].str.contains('歷史匯率').sum()
             fallback_count = len(display) - historical_count
