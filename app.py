@@ -30,7 +30,7 @@ def load_csv(filepath):
     if '升跌（%）' in df.columns:
         df['升跌（%）'] = df['升跌（%）'].astype(str).str.replace('%', '')
         df['升跌（%）'] = pd.to_numeric(df['升跌（%）'], errors='coerce')
-    df = df.sort_values('日期').reset_index(drop=True)
+    df = df.sort_values('日期', ascending=False).reset_index(drop=True)
     return df
 
 # ========== 載入數據 ==========
@@ -114,14 +114,15 @@ def show_max_gain_loss_section(label, periods):
                 value=f"{loss:.2f}%"
             )
 
-def show_data_tabs(data_dict, label, currency="$"):
+def show_data_tabs(data_dict, label, currency="$", source=""):
     """顯示數據分頁（國際金價用）"""
     st.subheader(f"📋 {label} — 完整歷史數據")
+    st.caption(f"📡 數據來源：{source}")
     tab_labels = list(data_dict.keys())
     tabs = st.tabs([f"📅 {t}" for t in tab_labels])
     for tab, (period_name, df) in zip(tabs, data_dict.items()):
         with tab:
-            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料")
+            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：{source} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
             display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
@@ -139,11 +140,12 @@ def show_data_tabs(data_dict, label, currency="$"):
 def show_data_tabs_sge(data_dict):
     """顯示上海金數據分頁（含美元換算欄位）"""
     st.subheader("📋 上海金現貨 (Au99.99) — 完整歷史數據")
+    st.caption("📡 數據來源：上海黃金交易所")
     tab_labels = list(data_dict.keys())
     tabs = st.tabs([f"📅 {t}" for t in tab_labels])
     for tab, (period_name, df) in zip(tabs, data_dict.items()):
         with tab:
-            st.caption(f"上海金現貨 {period_name} — 共 {len(df)} 筆資料 | 換算匯率: USD/CNY = {USD_CNY_RATE}")
+            st.caption(f"上海金現貨 {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 換算匯率: USD/CNY = {USD_CNY_RATE} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
             display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
@@ -209,7 +211,7 @@ st.header("📌 最新報價")
 col_futures, col_futures_session = st.columns([3, 1])
 with col_futures:
     st.markdown("### COMEX 黃金期貨")
-    show_latest_metrics(futures_daily.iloc[-1], "COMEX 黃金期貨", "$")
+    show_latest_metrics(futures_daily.iloc[0], "COMEX 黃金期貨", "$")
 with col_futures_session:
     st.markdown("### 🕐 交易時段")
     st.markdown("""
@@ -225,7 +227,7 @@ st.markdown("---")
 col_spot, col_spot_session = st.columns([3, 1])
 with col_spot:
     st.markdown("### 倫敦金現貨 (XAU/USD)")
-    show_latest_metrics(spot_daily.iloc[-1], "倫敦金現貨", "$")
+    show_latest_metrics(spot_daily.iloc[0], "倫敦金現貨", "$")
 with col_spot_session:
     st.markdown("### 🕐 交易時段")
     st.markdown("""
@@ -241,7 +243,7 @@ st.markdown("---")
 col_sge, col_sge_session = st.columns([3, 1])
 with col_sge:
     st.markdown("### 上海金現貨 (Au99.99)")
-    show_latest_metrics_sge(sge_daily.iloc[-1])
+    show_latest_metrics_sge(sge_daily.iloc[0])
 with col_sge_session:
     st.markdown("### 🕐 交易時段")
     st.markdown("""
@@ -288,14 +290,14 @@ st.header("📋 完整歷史數據")
 
 show_data_tabs(
     {"日線": futures_daily, "週線": futures_weekly, "月線": futures_monthly},
-    "COMEX 黃金期貨", "$"
+    "COMEX 黃金期貨", "$", "Investing.com"
 )
 
 st.markdown("---")
 
 show_data_tabs(
     {"日線": spot_daily, "週線": spot_weekly, "月線": spot_monthly},
-    "倫敦金現貨 (XAU/USD)", "$"
+    "倫敦金現貨 (XAU/USD)", "$", "Investing.com"
 )
 
 st.markdown("---")
