@@ -130,14 +130,16 @@ def get_common_dates(df1, df2):
     common = s1.index.intersection(s2.index)
     return s1.loc[common], s2.loc[common]
 
+def get_common_dates_by_series(s1, s2):
+    common = s1.index.intersection(s2.index)
+    return s1.loc[common], s2.loc[common]
+
 def align_weekly_to_sunday(df):
-    """把週線日期對齊到週日"""
     df = df.copy()
     df['日期'] = df['日期'].apply(lambda d: d + pd.Timedelta(days=(6 - d.weekday())))
     return df
 
 def get_common_weekly(sge_w, spot_w):
-    """上海金週線對齊週日後，跟倫敦金週線找交集"""
     sge_aligned = align_weekly_to_sunday(sge_w)
     s1 = sge_aligned.set_index('日期')['收市']
     s2 = spot_w.set_index('日期')['收市']
@@ -206,7 +208,7 @@ with c3:
 
 st.markdown("---")
 
-# ---- 上海金(換算USD) vs 倫敦金 ----
+# ---- 上海金 vs 倫敦金 ----
 st.subheader("上海金現貨 (換算 USD/盎司) vs 倫敦金現貨")
 
 sge_daily_usd = sge_daily.set_index('日期')['收市'].apply(cny_per_gram_to_usd_per_ounce)
