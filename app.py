@@ -61,6 +61,28 @@ def cny_per_gram_to_usd_per_ounce(price_cny, rate):
         return 0
     return (price_cny * OUNCE_TO_GRAM) / rate
 
+def color_pct(val_str):
+    """為漲跌幅字串加顏色"""
+    try:
+        val = float(val_str.replace('%', '').replace('+', ''))
+        if val > 0:
+            return f'<span style="color:#22C55E;font-weight:600;">{val_str}</span>'
+        elif val < 0:
+            return f'<span style="color:#EF4444;font-weight:600;">{val_str}</span>'
+        else:
+            return f'<span style="color:#9CA3AF;font-weight:600;">{val_str}</span>'
+    except:
+        return val_str
+
+def color_metric_delta(delta_val):
+    """為 st.metric 的 delta 值加顏色"""
+    if delta_val > 0:
+        return f"🟢 +{delta_val:.2f}%"
+    elif delta_val < 0:
+        return f"🔴 {delta_val:.2f}%"
+    else:
+        return f"⚪ {delta_val:.2f}%"
+
 # ========== 網頁配置 ==========
 st.set_page_config(page_title="黃金歷史數據看板", layout="wide", page_icon="🥇")
 
@@ -122,22 +144,25 @@ def format_date(d):
 
 def show_latest_metrics(latest, label, currency="$"):
     col_date, col_close, col_change = st.columns(3)
-    with col_date: st.metric(label=f"{label} 最新交易日", value=format_date(latest['日期']))
-    with col_close: st.metric(label=f"{label} 收市價", value=f"{currency}{latest['收市']:,.2f}")
-    with col_change: st.metric(label=f"{label} 當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+    with col_date:
+        st.metric(label=f"{label} 最新交易日", value=format_date(latest['日期']))
+    with col_close:
+        st.metric(label=f"{label} 收市價", value=f"{currency}{latest['收市']:,.2f}")
+    with col_change:
+        change_val = latest['升跌（%）']
+        st.metric(label=f"{label} 當日漲跌幅", value=color_metric_delta(change_val))
 
 def show_latest_metrics_sge(latest, rate, spot_latest_price):
-    """顯示上海金最新報價（含換算和對國際金溢價，並加顏色）"""
+    """顯示上海金最新報價"""
     usd_price = cny_per_gram_to_usd_per_ounce(latest['收市'], rate)
     premium_pct = ((usd_price - spot_latest_price) / spot_latest_price * 100) if spot_latest_price else 0
 
-    # 溢價顏色
     if premium_pct > 0:
-        premium_color = "#22C55E"  # 綠色：上海金溢價
+        premium_color = "#22C55E"
     elif premium_pct < 0:
-        premium_color = "#EF4444"  # 紅色：上海金折價
+        premium_color = "#EF4444"
     else:
-        premium_color = "#9CA3AF"  # 灰色
+        premium_color = "#9CA3AF"
 
     col_date, col_cny, col_usd, col_premium, col_change = st.columns([1.2, 1, 1, 1, 0.8])
 
@@ -155,9 +180,9 @@ def show_latest_metrics_sge(latest, rate, spot_latest_price):
         </div>
         """, unsafe_allow_html=True)
     with col_change:
-        st.metric(label="當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+        change_val = latest['升跌（%）']
+        st.metric(label="當日漲跌幅", value=color_metric_delta(change_val))
 
-    # 匯率小字
     st.caption(f"💱 換算匯率: USD/CNY = {rate:.4f} | 國際金參考價: ${spot_latest_price:,.2f}/盎司")
 
 
@@ -167,8 +192,8 @@ def show_max_gain_loss_section(label, periods):
     for i, (p_label, gain, gain_date, loss, loss_date) in enumerate(periods):
         with cols[i]:
             st.markdown(f"### {p_label}")
-            st.metric(label=f"▲ 最大漲幅 ({format_date(gain_date)})", value=f"+{gain:.2f}%")
-            st.metric(label=f"▼ 最大跌幅 ({format_date(loss_date)})", value=f"{loss:.2f}%")
+            st.metric(label=f"▲ 最大漲幅 ({format_date(gain_date)})", value=color_metric_delta(gain))
+            st.metric(label=f"▼ 最大跌幅 ({format_date(loss_date)})", value=color_metric_delta(loss))
 
 def show_data_tabs(data_dict, label, currency="$", source=""):
     st.subheader(f"📋 {label} — 完整歷史數據")
@@ -180,18 +205,20 @@ def show_data_tabs(data_dict, label, currency="$", source=""):
             st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：{source} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
-            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+            display['升跌（%）_fmt'] = display['升跌（%）'].apply(lambda x: color_pct(f"{x:+.2f}%"))
             display['收市'] = display['收市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['開市'] = display['開市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['高'] = display['高'].apply(lambda x: f"{currency}{x:,.2f}")
             display['低'] = display['低'].apply(lambda x: f"{currency}{x:,.2f}")
-            st.dataframe(
-                display[['日期', '收市', '開市', '高', '低', '升跌（%）']],
-                use_container_width=True, hide_index=True, height=500
+            st.write(
+                display[['日期', '收市', '開市', '高', '低', '升跌（%）_fmt']].to_html(
+                    index=False, escape=False, classes='dataframe-table'
+                ),
+                unsafe_allow_html=True
             )
 
 def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
-    """上海金數據表：價格用括號附上換算USD和對國際金的%差距"""
+    """上海金數據表：括號內附換算USD及對國際金%差距，漲跌幅有顏色"""
     st.subheader("📋 上海金現貨 (Au99.99) — 完整歷史數據")
     st.caption("📡 數據來源：上海黃金交易所")
     tab_labels = list(data_dict.keys())
@@ -220,7 +247,13 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
                     check_date = check_date - timedelta(days=1)
                 if spot_price:
                     premium = (usd - spot_price) / spot_price * 100
-                    return f"¥{price_cny:,.2f} (${usd:,.2f}, {premium:+.2f}%)"
+                    if premium > 0:
+                        pct_color = "#22C55E"
+                    elif premium < 0:
+                        pct_color = "#EF4444"
+                    else:
+                        pct_color = "#9CA3AF"
+                    return f"¥{price_cny:,.2f} (${usd:,.2f}, <span style='color:{pct_color};font-weight:600;'>{premium:+.2f}%</span>)"
                 else:
                     return f"¥{price_cny:,.2f} (${usd:,.2f})"
 
@@ -228,14 +261,16 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1)
             display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1)
             display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1)
-            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+            display['升跌（%）_fmt'] = display['升跌（%）'].apply(lambda x: color_pct(f"{x:+.2f}%"))
             display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
             display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
 
-            st.dataframe(
-                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源']],
-                use_container_width=True, hide_index=True, height=500,
-                column_config={'日期_str': '日期'}
+            st.write(
+                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）_fmt', '換算匯率', '匯率來源']].to_html(
+                    index=False, escape=False,
+                    header=['日期', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源']
+                ),
+                unsafe_allow_html=True
             )
 
             historical_count = display['匯率來源'].str.contains('歷史匯率').sum()
@@ -319,7 +354,6 @@ with col_sge_session:
 
 st.markdown("---")
 
-# ============================================================
 st.header("📊 最大漲跌幅總覽")
 
 show_max_gain_loss_section("COMEX 黃金期貨", [
@@ -340,7 +374,6 @@ show_max_gain_loss_section("上海金現貨 (Au99.99)", [
 ])
 st.markdown("---")
 
-# ============================================================
 st.header("📋 完整歷史數據")
 
 show_data_tabs({"日線": futures_daily, "週線": futures_weekly, "月線": futures_monthly}, "COMEX 黃金期貨", "$", "Investing.com")
@@ -350,7 +383,6 @@ st.markdown("---")
 show_data_tabs_sge({"日線": sge_daily, "週線": sge_weekly}, current_rate, spot_daily)
 st.markdown("---")
 
-# ============================================================
 st.header("📈 收市價走勢圖（只顯示共同交易日的數據）")
 
 st.subheader("COMEX 黃金期貨 vs 倫敦金現貨 (XAU/USD)")
