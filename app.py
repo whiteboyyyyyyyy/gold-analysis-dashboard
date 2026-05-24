@@ -47,7 +47,7 @@ monthly_df = load_csv(os.path.join(DATA_DIR, "london_gold_monthly.csv"))
 
 # ========== 找最大漲跌幅 ==========
 def find_max_gain_loss(df):
-    """找出最大漲幅和最大跌幅，回傳 (漲幅值, 漲幅日期, 跌幅值, 跌幅日期)"""
+    """找出最大漲幅和最大跌幅"""
     gain_row = df.loc[df['升跌（%）'].idxmax()]
     loss_row = df.loc[df['升跌（%）'].idxmin()]
     return (
@@ -132,8 +132,12 @@ with tab1:
     display_daily = daily_df.copy()
     display_daily['日期'] = display_daily['日期'].dt.strftime('%Y-%m-%d')
     display_daily['升跌（%）'] = display_daily['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+    display_daily['收市'] = display_daily['收市'].apply(lambda x: f"${x:,.2f}")
+    display_daily['開市'] = display_daily['開市'].apply(lambda x: f"${x:,.2f}")
+    display_daily['高'] = display_daily['高'].apply(lambda x: f"${x:,.2f}")
+    display_daily['低'] = display_daily['低'].apply(lambda x: f"${x:,.2f}")
     st.dataframe(
-        display_daily[['日期', '收市', '開市', '高', '低', '成交量', '升跌（%）']],
+        display_daily[['日期', '收市', '開市', '高', '低', '升跌（%）']],
         use_container_width=True,
         hide_index=True,
         height=500
@@ -144,8 +148,12 @@ with tab2:
     display_weekly = weekly_df.copy()
     display_weekly['日期'] = display_weekly['日期'].dt.strftime('%Y-%m-%d')
     display_weekly['升跌（%）'] = display_weekly['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+    display_weekly['收市'] = display_weekly['收市'].apply(lambda x: f"${x:,.2f}")
+    display_weekly['開市'] = display_weekly['開市'].apply(lambda x: f"${x:,.2f}")
+    display_weekly['高'] = display_weekly['高'].apply(lambda x: f"${x:,.2f}")
+    display_weekly['低'] = display_weekly['低'].apply(lambda x: f"${x:,.2f}")
     st.dataframe(
-        display_weekly[['日期', '收市', '開市', '高', '低', '成交量', '升跌（%）']],
+        display_weekly[['日期', '收市', '開市', '高', '低', '升跌（%）']],
         use_container_width=True,
         hide_index=True,
         height=500
@@ -156,8 +164,12 @@ with tab3:
     display_monthly = monthly_df.copy()
     display_monthly['日期'] = display_monthly['日期'].dt.strftime('%Y-%m-%d')
     display_monthly['升跌（%）'] = display_monthly['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+    display_monthly['收市'] = display_monthly['收市'].apply(lambda x: f"${x:,.2f}")
+    display_monthly['開市'] = display_monthly['開市'].apply(lambda x: f"${x:,.2f}")
+    display_monthly['高'] = display_monthly['高'].apply(lambda x: f"${x:,.2f}")
+    display_monthly['低'] = display_monthly['低'].apply(lambda x: f"${x:,.2f}")
     st.dataframe(
-        display_monthly[['日期', '收市', '開市', '高', '低', '成交量', '升跌（%）']],
+        display_monthly[['日期', '收市', '開市', '高', '低', '升跌（%）']],
         use_container_width=True,
         hide_index=True,
         height=500
