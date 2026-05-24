@@ -205,17 +205,41 @@ def show_data_tabs(data_dict, label, currency="$", source=""):
             st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：{source} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
-            display['升跌（%）_fmt'] = display['升跌（%）'].apply(lambda x: color_pct(f"{x:+.2f}%"))
+            # 使用 st.dataframe 顯示，column_config 可以自定義顏色
+            display['升跌_str'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
             display['收市'] = display['收市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['開市'] = display['開市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['高'] = display['高'].apply(lambda x: f"{currency}{x:,.2f}")
             display['低'] = display['低'].apply(lambda x: f"{currency}{x:,.2f}")
-            st.write(
-                display[['日期', '收市', '開市', '高', '低', '升跌（%）_fmt']].to_html(
-                    index=False, escape=False, classes='dataframe-table'
-                ),
-                unsafe_allow_html=True
+            
+            # 為了顏色，使用 to_html 但加入樣式確保全寬
+            html = display[['日期', '收市', '開市', '高', '低', '升跌_str']].to_html(
+                index=False, escape=False,
+                classes='dataframe-table',
+                header=['日期', '收市', '開市', '高', '低', '升跌（%）']
             )
+            # 加入 CSS 讓表格全寬
+            styled_html = f"""
+            <style>
+            .dataframe-table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .dataframe-table th {{
+                text-align: left;
+                padding: 8px;
+                background-color: #f0f2f6;
+                font-weight: 600;
+            }}
+            .dataframe-table td {{
+                text-align: left;
+                padding: 8px;
+                border-bottom: 1px solid #e0e0e0;
+            }}
+            </style>
+            {html}
+            """
+            st.write(styled_html, unsafe_allow_html=True)
 
 def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
     """上海金數據表：括號內附換算USD及對國際金%差距，漲跌幅有顏色"""
@@ -265,13 +289,32 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
             display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
 
-            st.write(
-                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）_fmt', '換算匯率', '匯率來源']].to_html(
-                    index=False, escape=False,
-                    header=['日期', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源']
-                ),
-                unsafe_allow_html=True
+            html = display[['日期_str', '收市', '開市', '高', '低', '升跌（%）_fmt', '換算匯率', '匯率來源']].to_html(
+                index=False, escape=False,
+                header=['日期', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源'],
+                classes='dataframe-table'
             )
+            styled_html = f"""
+            <style>
+            .dataframe-table {{
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .dataframe-table th {{
+                text-align: left;
+                padding: 8px;
+                background-color: #f0f2f6;
+                font-weight: 600;
+            }}
+            .dataframe-table td {{
+                text-align: left;
+                padding: 8px;
+                border-bottom: 1px solid #e0e0e0;
+            }}
+            </style>
+            {html}
+            """
+            st.write(styled_html, unsafe_allow_html=True)
 
             historical_count = display['匯率來源'].str.contains('歷史匯率').sum()
             fallback_count = len(display) - historical_count
