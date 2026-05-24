@@ -2,19 +2,16 @@ import streamlit as st
 import pandas as pd
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ========== 匯率設定 ==========
 USD_CNY_RATE = 7.25  # 預設匯率（當API無法獲取時使用）
 OUNCE_TO_GRAM = 31.1035
 
 @st.cache_data(ttl=3600)
-def get_usd_cny_rate():
-    """
-    從免費API獲取即時 USD/CNY 匯率
-    嘗試多個數據源，確保穩定性
-    """
-    # 方法1：Exchange Rate API (免費，無需API Key)
+def get_current_usd_cny_rate():
+    """獲取即時 USD/CNY 匯率"""
+    # 方法1：Exchange Rate API
     try:
         url = "https://open.er-api.com/v6/latest/USD"
         resp = requests.get(url, timeout=10)
@@ -26,7 +23,7 @@ def get_usd_cny_rate():
     except Exception:
         pass
 
-    # 方法2：Frankfurter API (免費，無需API Key)
+    # 方法2：Frankfurter API
     try:
         url = "https://api.frankfurter.app/latest?from=USD&to=CNY"
         resp = requests.get(url, timeout=10)
@@ -38,14 +35,46 @@ def get_usd_cny_rate():
     except Exception:
         pass
 
-    # 如果都失敗，回退到預設匯率
     return USD_CNY_RATE
+
+
+@st.cache_data(ttl=86400)
+def get_historical_rate(date_str):
+    """
+    獲取指定日期的 USD/CNY 匯率
+    使用 Frankfurter API 的歷史數據功能
+    """
+    try:
+        url = f"https://api.frankfurter.app/{date_str}?from=USD&to=CNY"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            rate = data.get('rates', {}).get('CNY')
+            if rate:
+                return float(rate)
+    except Exception:
+        pass
+    return None
+
+
+def get_rate_for_date(d, current_rate):
+    """
+    獲取某個日期的匯率
+    優先從 API 獲取歷史匯率，失敗則用即時匯率
+    """
+    date_str = d.strftime('%Y-%m-%d')
+    historical = get_historical_rate(date_str)
+    if historical:
+        return historical
+    return current_rate
+
 
 def cny_per_gram_to_usd_per_ounce(price_cny, rate):
     """人民幣/克 → 美元/盎司"""
     if rate == 0:
         return 0
     return (price_cny * OUNCE_TO_GRAM) / rate
+
 
 # ========== 網頁配置 ==========
 st.set_page_config(page_title="黃金歷史數據看板", layout="wide", page_icon="🥇")
@@ -54,8 +83,8 @@ st.title("🥇 黃金歷史數據看板")
 st.caption(f"COMEX 黃金期貨 + 倫敦金現貨 (XAU/USD) + 上海金現貨 (Au99.99)")
 
 # ========== 獲取即時匯率 ==========
-current_rate = get_usd_cny_rate()
-st.caption(f"💱 即時匯率: USD/CNY = {current_rate:.4f}（自動獲取，每小時更新）")
+current_rate = get_current_usd_cny_rate()
+st.caption(f"💱 即時匯率: USD/CNY = {current_rate:.4f}（自動獲取，每小時更新 | 歷史換算使用當日真實匯率）")
 
 # ========== 讀取CSV函數 ==========
 @st.cache_data
@@ -132,15 +161,12 @@ def show_latest_metrics_sge(latest, rate):
     with col_close_cny:
         st.metric(label="收市價 (CNY/克)", value=f"¥{latest['收市']:,.2f}")
     with col_close_usd:
-        st.metric(label="換算 (USD/盎司)", value=f"${usd_price:,.2f}")
+        st.metric(label=f"換算 (USD/盎司) @ {rate:.4f}", value=f"${usd_price:,.2f}")
     with col_change:
         st.metric(label="當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
 
 def show_max_gain_loss_section(label, periods):
-    """
-    顯示最大漲跌幅總覽
-    periods = [(label, gain, gain_date, loss, loss_date), ...]
-    """
+    """顯示最大漲跌幅總覽"""
     st.subheader(f"📊 {label} — 最大漲跌幅總覽")
     cols = st.columns(len(periods))
     for i, (p_label, gain, gain_date, loss, loss_date) in enumerate(periods):
@@ -178,15 +204,15 @@ def show_data_tabs(data_dict, label, currency="$", source=""):
                 height=500
             )
 
-def show_data_tabs_sge(data_dict, rate):
-    """顯示上海金數據分頁（含美元換算欄位）"""
+def show_data_tabs_sge(data_dict, current_rate):
+    """顯示上海金數據分頁（含美元換算欄位，使用當日歷史匯率）"""
     st.subheader("📋 上海金現貨 (Au99.99) — 完整歷史數據")
     st.caption("📡 數據來源：上海黃金交易所")
     tab_labels = list(data_dict.keys())
     tabs = st.tabs([f"📅 {t}" for t in tab_labels])
     for tab, (period_name, df) in zip(tabs, data_dict.items()):
         with tab:
-            st.caption(f"上海金現貨 {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 換算匯率: USD/CNY = {rate:.4f} | 由新至舊排列")
+            st.caption(f"上海金現貨 {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 換算使用當日歷史匯率 | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
             display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
@@ -194,10 +220,17 @@ def show_data_tabs_sge(data_dict, rate):
             display['開市 (CNY/克)'] = display['開市'].apply(lambda x: f"¥{x:,.2f}")
             display['高 (CNY/克)'] = display['高'].apply(lambda x: f"¥{x:,.2f}")
             display['低 (CNY/克)'] = display['低'].apply(lambda x: f"¥{x:,.2f}")
-            display['收市 (USD/盎司)'] = df['收市'].apply(lambda x: f"${cny_per_gram_to_usd_per_ounce(x, rate):,.2f}")
-            display['開市 (USD/盎司)'] = df['開市'].apply(lambda x: f"${cny_per_gram_to_usd_per_ounce(x, rate):,.2f}")
-            display['高 (USD/盎司)'] = df['高'].apply(lambda x: f"${cny_per_gram_to_usd_per_ounce(x, rate):,.2f}")
-            display['低 (USD/盎司)'] = df['低'].apply(lambda x: f"${cny_per_gram_to_usd_per_ounce(x, rate):,.2f}")
+
+            # 用當日歷史匯率換算
+            def convert_with_historical_rate(price, date_obj):
+                rate = get_rate_for_date(date_obj, current_rate)
+                return f"${cny_per_gram_to_usd_per_ounce(price, rate):,.2f}"
+
+            display['收市 (USD/盎司)'] = df.apply(lambda row: convert_with_historical_rate(row['收市'], row['日期']), axis=1)
+            display['開市 (USD/盎司)'] = df.apply(lambda row: convert_with_historical_rate(row['開市'], row['日期']), axis=1)
+            display['高 (USD/盎司)'] = df.apply(lambda row: convert_with_historical_rate(row['高'], row['日期']), axis=1)
+            display['低 (USD/盎司)'] = df.apply(lambda row: convert_with_historical_rate(row['低'], row['日期']), axis=1)
+
             st.dataframe(
                 display[[
                     '日期',
@@ -378,22 +411,32 @@ with c3:
 st.markdown("---")
 
 # ---- 上海金 vs 倫敦金 ----
-st.subheader("上海金現貨 (換算 USD/盎司) vs 倫敦金現貨")
+st.subheader("上海金現貨 (使用當日歷史匯率換算 USD/盎司) vs 倫敦金現貨")
 
-sge_daily_usd = sge_daily.set_index('日期')['收市'].apply(lambda x: cny_per_gram_to_usd_per_ounce(x, current_rate))
+# 為每筆上海金數據使用當日歷史匯率
+sge_daily_with_rate = sge_daily.copy()
+sge_daily_with_rate['rate'] = sge_daily_with_rate['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
+sge_daily_with_rate['收市_USD'] = sge_daily_with_rate.apply(lambda row: cny_per_gram_to_usd_per_ounce(row['收市'], row['rate']), axis=1)
+
 spot_daily_s = spot_daily.set_index('日期')['收市']
 
 d1, d2 = st.columns(2)
 
 with d1:
     st.markdown("**日線對比**")
-    s1, s2 = get_common_dates_by_series(sge_daily_usd, spot_daily_s)
+    sge_daily_usd_series = sge_daily_with_rate.set_index('日期')['收市_USD']
+    s1, s2 = get_common_dates_by_series(sge_daily_usd_series, spot_daily_s)
     chart = pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨': s2}).sort_index()
     st.line_chart(chart, color=["#E63946", "#004E89"])
 
 with d2:
     st.markdown("**週線對比**")
     s1, s2 = get_common_weekly(sge_weekly, spot_weekly)
-    s1_usd = s1.apply(lambda x: cny_per_gram_to_usd_per_ounce(x, current_rate))
+    # 為週線的每一筆也用歷史匯率
+    s1_usd_list = []
+    for idx, val in s1.items():
+        rate = get_rate_for_date(idx, current_rate)
+        s1_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
+    s1_usd = pd.Series(s1_usd_list, index=s1.index)
     chart = pd.DataFrame({'上海金 (USD/盎司)': s1_usd, '倫敦金現貨': s2}).sort_index()
     st.line_chart(chart, color=["#E63946", "#004E89"])
