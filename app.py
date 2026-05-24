@@ -139,14 +139,17 @@ def show_data_tabs_sge(data_dict):
                 use_container_width=True, hide_index=True, height=500
             )
 
-def merge_chart_data(df1, df2, label1, label2):
-    """
-    安全合併兩個 DataFrame 的收市價，保留各自日期，用 outer join
-    """
+def get_common_dates(df1, df2):
+    """只取兩個 DataFrame 都有的日期"""
     s1 = df1.set_index('日期')['收市']
     s2 = df2.set_index('日期')['收市']
+    common = s1.index.intersection(s2.index)
+    return s1.loc[common], s2.loc[common]
+
+def plot_comparison(df1, df2, label1, label2):
+    """畫只取共同日期的對比圖"""
+    s1, s2 = get_common_dates(df1, df2)
     result = pd.DataFrame({label1: s1, label2: s2}).sort_index()
-    # 不過濾掉 NaN，各自畫各自的線段
     return result
 
 
@@ -216,26 +219,29 @@ st.markdown("---")
 # ============================================================
 # 第四部分：走勢圖
 # ============================================================
-st.header("📈 收市價走勢圖")
+st.header("📈 收市價走勢圖（只顯示共同交易日的數據）")
 
 # ---- COMEX vs 倫敦金 ----
 st.subheader("COMEX 黃金期貨 vs 倫敦金現貨 (XAU/USD)")
 c1, c2, c3 = st.columns(3)
 with c1:
     st.markdown("**日線對比**")
-    st.line_chart(merge_chart_data(futures_daily, spot_daily, 'COMEX 期貨', '倫敦金現貨'), color=["#FF6B35", "#004E89"])
+    chart = plot_comparison(futures_daily, spot_daily, 'COMEX 期貨', '倫敦金現貨')
+    st.line_chart(chart, color=["#FF6B35", "#004E89"])
 with c2:
     st.markdown("**週線對比**")
-    st.line_chart(merge_chart_data(futures_weekly, spot_weekly, 'COMEX 期貨', '倫敦金現貨'), color=["#FF6B35", "#004E89"])
+    chart = plot_comparison(futures_weekly, spot_weekly, 'COMEX 期貨', '倫敦金現貨')
+    st.line_chart(chart, color=["#FF6B35", "#004E89"])
 with c3:
     st.markdown("**月線對比**")
-    st.line_chart(merge_chart_data(futures_monthly, spot_monthly, 'COMEX 期貨', '倫敦金現貨'), color=["#FF6B35", "#004E89"])
+    chart = plot_comparison(futures_monthly, spot_monthly, 'COMEX 期貨', '倫敦金現貨')
+    st.line_chart(chart, color=["#FF6B35", "#004E89"])
 
 st.markdown("---")
 
 # ---- 上海金(換算USD) vs 倫敦金 ----
 st.subheader("上海金現貨 (換算 USD/盎司) vs 倫敦金現貨")
-# 建立上海金 USD 換算 Series
+# 建立上海金 USD 換算版本
 sge_daily_usd = sge_daily.copy()
 sge_daily_usd['收市_USD'] = sge_daily_usd['收市'].apply(cny_per_gram_to_usd_per_ounce)
 sge_weekly_usd = sge_weekly.copy()
@@ -244,20 +250,21 @@ sge_weekly_usd['收市_USD'] = sge_weekly_usd['收市'].apply(cny_per_gram_to_us
 d1, d2 = st.columns(2)
 with d1:
     st.markdown("**日線對比**")
-    # 合併
-    daily_sge_vs_spot = pd.DataFrame({
-        '上海金 (USD/盎司)': sge_daily_usd.set_index('日期')['收市_USD'],
-        '倫敦金現貨 (USD/盎司)': spot_daily.set_index('日期')['收市']
-    }).sort_index()
-    st.line_chart(daily_sge_vs_spot, color=["#E63946", "#004E89"])
+    s1, s2 = get_common_dates_by_series(
+        sge_daily_usd.set_index('日期')['收市_USD'],
+        spot_daily.set_index('日期')['收市']
+    )
+    chart = pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨 (USD/盎司)': s2}).sort_index()
+    st.line_chart(chart, color=["#E63946", "#004E89"])
 
 with d2:
     st.markdown("**週線對比**")
-    weekly_sge_vs_spot = pd.DataFrame({
-        '上海金 (USD/盎司)': sge_weekly_usd.set_index('日期')['收市_USD'],
-        '倫敦金現貨 (USD/盎司)': spot_weekly.set_index('日期')['收市']
-    }).sort_index()
-    st.line_chart(weekly_sge_vs_spot, color=["#E63946", "#004E89"])
+    s1, s2 = get_common_dates_by_series(
+        sge_weekly_usd.set_index('日期')['收市_USD'],
+        spot_weekly.set_index('日期')['收市']
+    )
+    chart = pd.DataFrame({'上海金 (USD/盎司)': s1, '倫敦金現貨 (USD/盎司)': s2}).sort_index()
+    st.line_chart(chart, color=["#E63946", "#004E89"])
 
 st.markdown("---")
 
@@ -273,9 +280,9 @@ with col_a:
     st.markdown("""
     | 時段 | 香港時間 |
     |:---|:---|
-    | 夏令時間 | 星期一 06:00 – 星期六 05:00 [citation:5][citation:10] |
-    | 冬令時間 | 星期一 07:00 – 星期六 06:00 [citation:5][citation:10] |
-    | 每日休市 | 05:00–06:00（夏令）或 06:00–07:00（冬令）[citation:8] |
+    | 夏令時間 | 星期一 06:00 – 星期六 05:00 |
+    | 冬令時間 | 星期一 07:00 – 星期六 06:00 |
+    | 每日休市 | 05:00–06:00（夏令）或 06:00–07:00（冬令） |
     """)
 
 with col_b:
@@ -283,9 +290,9 @@ with col_b:
     st.markdown("""
     | 時段 | 香港時間 |
     |:---|:---|
-    | 夏令時間 | 星期一 06:00 – 星期六 05:00 [citation:3][citation:6] |
-    | 冬令時間 | 星期一 07:00 – 星期六 06:00 [citation:3][citation:6] |
-    | 每日休市 | 05:00–06:00（夏令）或 06:00–07:00（冬令）[citation:6] |
+    | 夏令時間 | 星期一 06:00 – 星期六 05:00 |
+    | 冬令時間 | 星期一 07:00 – 星期六 06:00 |
+    | 每日休市 | 05:00–06:00（夏令）或 06:00–07:00（冬令） |
     """)
 
 with col_c:
@@ -293,7 +300,7 @@ with col_c:
     st.markdown("""
     | 時段 | 香港時間 |
     |:---|:---|
-    | 早盤 | 09:00 – 11:30 [citation:1] |
-    | 午盤 | 13:30 – 15:30 [citation:1] |
-    | 夜盤 | 20:00 – 02:30（翌日凌晨）[citation:1] |
+    | 早盤 | 09:00 – 11:30 |
+    | 午盤 | 13:30 – 15:30 |
+    | 夜盤 | 20:00 – 02:30（翌日凌晨） |
     """)
