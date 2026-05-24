@@ -61,6 +61,47 @@ def cny_per_gram_to_usd_per_ounce(price_cny, rate):
         return 0
     return (price_cny * OUNCE_TO_GRAM) / rate
 
+# ========== 通用格式化函數 ==========
+def fmt_pct(val):
+    """格式化百分比，正數前面加🟢，負數前面加🔴"""
+    if val > 0:
+        return f"🟢 +{val:.2f}%"
+    elif val < 0:
+        return f"🔴 {val:.2f}%"
+    else:
+        return f"  {val:.2f}%"
+
+def fmt_pct_plain(val):
+    """格式化百分比，正數前面加🟢，負數前面加🔴（無加號）"""
+    if val > 0:
+        return f"🟢 {val:+.2f}%"
+    elif val < 0:
+        return f"🔴 {val:.2f}%"
+    else:
+        return f"  {val:.2f}%"
+
+def fmt_num_with_sign(val):
+    """格式化數字，正數加+號和🟢，負數加🔴"""
+    if val > 0:
+        return f"🟢 +{val:.2f}"
+    elif val < 0:
+        return f"🔴 {val:.2f}"
+    else:
+        return f"  {val:.2f}"
+
+def fmt_pct_delta(val, include_color=True):
+    """格式化漲跌幅用於 delta，正數加🟢，負數加🔴"""
+    if include_color:
+        if val > 0:
+            return f"🟢 +{val:.2f}%"
+        elif val < 0:
+            return f"🔴 {val:.2f}%"
+        else:
+            return f"  {val:.2f}%"
+    else:
+        return f"{val:+.2f}%"
+
+
 # ========== 網頁配置 ==========
 st.set_page_config(page_title="黃金歷史數據看板", layout="wide", page_icon="🥇")
 
@@ -103,7 +144,10 @@ sge_weekly = load_csv(os.path.join(DATA_DIR, "sge_spot_weekly.csv"))
 def find_max_gain_loss(df):
     gain_row = df.loc[df['升跌（%）'].idxmax()]
     loss_row = df.loc[df['升跌（%）'].idxmin()]
-    return (gain_row['升跌（%）'], gain_row['日期'], loss_row['升跌（%）'], loss_row['日期'])
+    return (
+        gain_row['升跌（%）'], gain_row['日期'],
+        loss_row['升跌（%）'], loss_row['日期']
+    )
 
 s_d_gain, s_d_gain_date, s_d_loss, s_d_loss_date = find_max_gain_loss(spot_daily)
 s_w_gain, s_w_gain_date, s_w_loss, s_w_loss_date = find_max_gain_loss(spot_weekly)
@@ -124,7 +168,7 @@ def show_latest_metrics(latest, label, currency="$"):
     col_date, col_close, col_change = st.columns(3)
     with col_date: st.metric(label=f"{label} 最新交易日", value=format_date(latest['日期']))
     with col_close: st.metric(label=f"{label} 收市價", value=f"{currency}{latest['收市']:,.2f}")
-    with col_change: st.metric(label=f"{label} 當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+    with col_change: st.metric(label=f"{label} 當日漲跌幅", value=fmt_pct_delta(latest['升跌（%）'], include_color=False))
 
 def show_latest_metrics_sge(latest, rate, spot_latest_price):
     """顯示上海金最新報價（含換算和對國際金溢價，並加顏色）"""
@@ -154,7 +198,7 @@ def show_latest_metrics_sge(latest, rate, spot_latest_price):
         </div>
         """, unsafe_allow_html=True)
     with col_change:
-        st.metric(label="當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
+        st.metric(label="當日漲跌幅", value=fmt_pct_delta(latest['升跌（%）'], include_color=False))
 
     st.caption(f"💱 換算匯率: USD/CNY = {rate:.4f} | 國際金參考價: ${spot_latest_price:,.2f}/盎司")
 
@@ -165,8 +209,8 @@ def show_max_gain_loss_section(label, periods):
     for i, (p_label, gain, gain_date, loss, loss_date) in enumerate(periods):
         with cols[i]:
             st.markdown(f"### {p_label}")
-            st.metric(label=f"▲ 最大漲幅 ({format_date(gain_date)})", value=f"+{gain:.2f}%")
-            st.metric(label=f"▼ 最大跌幅 ({format_date(loss_date)})", value=f"{loss:.2f}%")
+            st.metric(label=f"▲ 最大漲幅 ({format_date(gain_date)})", value=fmt_pct(gain))
+            st.metric(label=f"▼ 最大跌幅 ({format_date(loss_date)})", value=fmt_pct(loss))
 
 def show_data_tabs(data_dict, label, currency="$", source=""):
     st.subheader(f"📋 {label} — 完整歷史數據")
@@ -178,7 +222,7 @@ def show_data_tabs(data_dict, label, currency="$", source=""):
             st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：{source} | 由新至舊排列")
             display = df.copy()
             display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
-            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: fmt_pct_plain(x))
             display['收市'] = display['收市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['開市'] = display['開市'].apply(lambda x: f"{currency}{x:,.2f}")
             display['高'] = display['高'].apply(lambda x: f"{currency}{x:,.2f}")
@@ -218,7 +262,8 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
                     check_date = check_date - timedelta(days=1)
                 if spot_price:
                     premium = (usd - spot_price) / spot_price * 100
-                    return f"¥{price_cny:,.2f} (${usd:,.2f}, {premium:+.2f}%)"
+                    premium_str = fmt_pct_plain(premium)
+                    return f"¥{price_cny:,.2f} (${usd:,.2f}, {premium_str})"
                 else:
                     return f"¥{price_cny:,.2f} (${usd:,.2f})"
 
@@ -226,7 +271,7 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df):
             display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1)
             display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1)
             display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1)
-            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: fmt_pct_plain(x))
             display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
             display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
 
@@ -415,7 +460,6 @@ st.markdown("---")
 st.header("📈 上海金現貨 vs 國際金 — 溢價% 走勢圖")
 st.caption("溢價% = (上海金換算USD/盎司 - 倫敦金現貨USD/盎司) / 倫敦金現貨USD/盎司 × 100%")
 
-# 計算溢價
 sge_daily_all = sge_daily.copy()
 sge_daily_all_rates = sge_daily_all['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
 sge_daily_all['rate'] = sge_daily_all_rates.apply(lambda x: x[0])
@@ -455,7 +499,6 @@ with premium_col2:
     st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w} 週 | 🟡 即時匯率 {curr_count_w} 週")
     st.line_chart(premium_w.rename('溢價%'))
 
-# 溢價統計摘要
 st.markdown("---")
 st.subheader("📊 溢價% 統計摘要")
 
@@ -463,12 +506,12 @@ stat_col1, stat_col2 = st.columns(2)
 
 with stat_col1:
     st.markdown("**日線溢價統計**")
-    st.metric(label="最高溢價", value=f"{premium_series.max():+.2f}%")
-    st.metric(label="最低溢價（最深折價）", value=f"{premium_series.min():+.2f}%")
-    st.metric(label="平均溢價", value=f"{premium_series.mean():+.2f}%")
+    st.metric(label="最高溢價", value=fmt_pct(premium_series.max()))
+    st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_series.min()))
+    st.metric(label="平均溢價", value=fmt_pct(premium_series.mean()))
 
 with stat_col2:
     st.markdown("**週線溢價統計**")
-    st.metric(label="最高溢價", value=f"{premium_w.max():+.2f}%")
-    st.metric(label="最低溢價（最深折價）", value=f"{premium_w.min():+.2f}%")
-    st.metric(label="平均溢價", value=f"{premium_w.mean():+.2f}%")
+    st.metric(label="最高溢價", value=fmt_pct(premium_w.max()))
+    st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_w.min()))
+    st.metric(label="平均溢價", value=fmt_pct(premium_w.mean()))
