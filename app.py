@@ -3,10 +3,10 @@ import pandas as pd
 import os
 
 # ========== 網頁配置 ==========
-st.set_page_config(page_title="倫敦金現貨歷史數據看板", layout="wide", page_icon="🥇")
+st.set_page_config(page_title="黃金歷史數據看板", layout="wide", page_icon="🥇")
 
-st.title("🥇 倫敦金現貨 (XAU/USD) 歷史數據看板")
-st.caption("數據範圍：2020–2026 | 資料來源：歷史CSV數據")
+st.title("🥇 黃金歷史數據看板")
+st.caption("數據範圍：2020–2026 | COMEX 黃金期貨 + 倫敦金現貨 (XAU/USD)")
 
 # ========== 讀取CSV函數 ==========
 @st.cache_data
@@ -40,157 +40,193 @@ def load_csv(filepath):
 # ========== 載入數據 ==========
 DATA_DIR = "data"
 
-daily_df = load_csv(os.path.join(DATA_DIR, "london_gold_daily.csv"))
-weekly_df = load_csv(os.path.join(DATA_DIR, "london_gold_weekly.csv"))
-monthly_df = load_csv(os.path.join(DATA_DIR, "london_gold_monthly.csv"))
+# 倫敦金現貨
+spot_daily = load_csv(os.path.join(DATA_DIR, "london_gold_daily.csv"))
+spot_weekly = load_csv(os.path.join(DATA_DIR, "london_gold_weekly.csv"))
+spot_monthly = load_csv(os.path.join(DATA_DIR, "london_gold_monthly.csv"))
+
+# COMEX 期貨
+futures_daily = load_csv(os.path.join(DATA_DIR, "comex_futures_daily.csv"))
+futures_weekly = load_csv(os.path.join(DATA_DIR, "comex_futures_weekly.csv"))
+futures_monthly = load_csv(os.path.join(DATA_DIR, "comex_futures_monthly.csv"))
 
 
 # ========== 找最大漲跌幅 ==========
-def find_max_gain_loss(df):
+def find_max_gain_loss(df, label_col='日期'):
     """找出最大漲幅和最大跌幅"""
     gain_row = df.loc[df['升跌（%）'].idxmax()]
     loss_row = df.loc[df['升跌（%）'].idxmin()]
     return (
-        gain_row['升跌（%）'], gain_row['日期'],
-        loss_row['升跌（%）'], loss_row['日期']
+        gain_row['升跌（%）'], gain_row[label_col],
+        loss_row['升跌（%）'], loss_row[label_col]
     )
 
-daily_max_gain, daily_gain_date, daily_max_loss, daily_loss_date = find_max_gain_loss(daily_df)
-weekly_max_gain, weekly_gain_date, weekly_max_loss, weekly_loss_date = find_max_gain_loss(weekly_df)
-monthly_max_gain, monthly_gain_date, monthly_max_loss, monthly_loss_date = find_max_gain_loss(monthly_df)
+# 現貨
+s_d_gain, s_d_gain_date, s_d_loss, s_d_loss_date = find_max_gain_loss(spot_daily)
+s_w_gain, s_w_gain_date, s_w_loss, s_w_loss_date = find_max_gain_loss(spot_weekly)
+s_m_gain, s_m_gain_date, s_m_loss, s_m_loss_date = find_max_gain_loss(spot_monthly)
+
+# 期貨
+f_d_gain, f_d_gain_date, f_d_loss, f_d_loss_date = find_max_gain_loss(futures_daily)
+f_w_gain, f_w_gain_date, f_w_loss, f_w_loss_date = find_max_gain_loss(futures_weekly)
+f_m_gain, f_m_gain_date, f_m_loss, f_m_loss_date = find_max_gain_loss(futures_monthly)
 
 
 # ========== 最新報價 ==========
-latest = daily_df.iloc[-1]
-latest_date = latest['日期'].strftime('%Y-%m-%d')
-latest_close = latest['收市']
-latest_change = latest['升跌（%）']
+spot_latest = spot_daily.iloc[-1]
+futures_latest = futures_daily.iloc[-1]
+
+# ========== 顯示最新報價用的輔助函數 ==========
+def format_date(d):
+    return d.strftime('%Y-%m-%d')
+
+def show_latest_metrics(latest, label):
+    """顯示最新報價的三個 metric"""
+    col_date, col_close, col_change = st.columns(3)
+    with col_date:
+        st.metric(label=f"{label} 最新交易日", value=format_date(latest['日期']))
+    with col_close:
+        st.metric(label=f"{label} 收市價 (USD)", value=f"${latest['收市']:,.2f}")
+    with col_change:
+        st.metric(label=f"{label} 當日漲跌幅", value=f"{latest['升跌（%）']:+.2f}%")
 
 
-# ========== 頂部：最新報價 ==========
+# ========== 顯示最大漲跌幅用的輔助函數 ==========
+def show_max_gain_loss(label, d_gain, d_gain_date, d_loss, d_loss_date,
+                       w_gain, w_gain_date, w_loss, w_loss_date,
+                       m_gain, m_gain_date, m_loss, m_loss_date):
+    """顯示三週期最大漲跌幅"""
+    st.subheader(f"📊 {label} — 三週期最大漲跌幅總覽（2020–2026）")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("### 日線")
+        st.metric(
+            label=f"▲ 最大單日漲幅 ({format_date(d_gain_date)})",
+            value=f"+{d_gain:.2f}%"
+        )
+        st.metric(
+            label=f"▼ 最大單日跌幅 ({format_date(d_loss_date)})",
+            value=f"{d_loss:.2f}%"
+        )
+
+    with col2:
+        st.markdown("### 週線")
+        st.metric(
+            label=f"▲ 最大單週漲幅 ({format_date(w_gain_date)})",
+            value=f"+{w_gain:.2f}%"
+        )
+        st.metric(
+            label=f"▼ 最大單週跌幅 ({format_date(w_loss_date)})",
+            value=f"{w_loss:.2f}%"
+        )
+
+    with col3:
+        st.markdown("### 月線")
+        st.metric(
+            label=f"▲ 最大單月漲幅 ({format_date(m_gain_date)})",
+            value=f"+{m_gain:.2f}%"
+        )
+        st.metric(
+            label=f"▼ 最大單月跌幅 ({format_date(m_loss_date)})",
+            value=f"{m_loss:.2f}%"
+        )
+
+
+# ========== 顯示數據表用的輔助函數 ==========
+def show_data_tabs(daily_df, weekly_df, monthly_df, label):
+    """顯示日/週/月數據分頁"""
+    st.subheader(f"📋 {label} — 完整歷史數據")
+
+    tab1, tab2, tab3 = st.tabs(["📅 日線數據", "📅 週線數據", "📅 月線數據"])
+
+    for tab, df, period_name in [
+        (tab1, daily_df, "日線"),
+        (tab2, weekly_df, "週線"),
+        (tab3, monthly_df, "月線")
+    ]:
+        with tab:
+            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料")
+            display = df.copy()
+            display['日期'] = display['日期'].dt.strftime('%Y-%m-%d')
+            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
+            display['收市'] = display['收市'].apply(lambda x: f"${x:,.2f}")
+            display['開市'] = display['開市'].apply(lambda x: f"${x:,.2f}")
+            display['高'] = display['高'].apply(lambda x: f"${x:,.2f}")
+            display['低'] = display['低'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(
+                display[['日期', '收市', '開市', '高', '低', '升跌（%）']],
+                use_container_width=True,
+                hide_index=True,
+                height=500
+            )
+
+
+# ========== 顯示走勢圖用的輔助函數 ==========
+def show_charts(daily_df, weekly_df, monthly_df, label):
+    """顯示三個週期的走勢圖"""
+    st.subheader(f"📈 {label} — 收市價走勢圖")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown("**日線**")
+        st.line_chart(daily_df.set_index('日期')['收市'])
+
+    with col2:
+        st.markdown("**週線**")
+        st.line_chart(weekly_df.set_index('日期')['收市'])
+
+    with col3:
+        st.markdown("**月線**")
+        st.line_chart(monthly_df.set_index('日期')['收市'])
+
+
+# ========== 頁面佈局 ==========
+
+# ---- 最新報價 ----
 st.subheader("📌 最新報價")
-
-col_date, col_close, col_change = st.columns(3)
-with col_date:
-    st.metric(label="最新交易日", value=latest_date)
-with col_close:
-    st.metric(label="倫敦金現貨收市價 (USD)", value=f"${latest_close:,.2f}")
-with col_change:
-    st.metric(label="當日漲跌幅", value=f"{latest_change:+.2f}%")
+show_latest_metrics(futures_latest, "COMEX 黃金期貨")
+st.markdown("---")
+show_latest_metrics(spot_latest, "倫敦金現貨")
 
 st.markdown("---")
 
-
-# ========== 頂部：三週期最大漲跌幅總覽 ==========
-st.subheader("📊 三週期最大漲跌幅總覽（2020–2026）")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("### 日線")
-    st.metric(
-        label=f"▲ 最大單日漲幅 ({daily_gain_date.strftime('%Y-%m-%d')})",
-        value=f"+{daily_max_gain:.2f}%"
-    )
-    st.metric(
-        label=f"▼ 最大單日跌幅 ({daily_loss_date.strftime('%Y-%m-%d')})",
-        value=f"{daily_max_loss:.2f}%"
-    )
-
-with col2:
-    st.markdown("### 週線")
-    st.metric(
-        label=f"▲ 最大單週漲幅 ({weekly_gain_date.strftime('%Y-%m-%d')})",
-        value=f"+{weekly_max_gain:.2f}%"
-    )
-    st.metric(
-        label=f"▼ 最大單週跌幅 ({weekly_loss_date.strftime('%Y-%m-%d')})",
-        value=f"{weekly_max_loss:.2f}%"
-    )
-
-with col3:
-    st.markdown("### 月線")
-    st.metric(
-        label=f"▲ 最大單月漲幅 ({monthly_gain_date.strftime('%Y-%m-%d')})",
-        value=f"+{monthly_max_gain:.2f}%"
-    )
-    st.metric(
-        label=f"▼ 最大單月跌幅 ({monthly_loss_date.strftime('%Y-%m-%d')})",
-        value=f"{monthly_max_loss:.2f}%"
-    )
+# ---- COMEX 期貨 最大漲跌幅 ----
+show_max_gain_loss(
+    "COMEX 黃金期貨",
+    f_d_gain, f_d_gain_date, f_d_loss, f_d_loss_date,
+    f_w_gain, f_w_gain_date, f_w_loss, f_w_loss_date,
+    f_m_gain, f_m_gain_date, f_m_loss, f_m_loss_date
+)
 
 st.markdown("---")
 
-
-# ========== 完整數據表（三個分頁） ==========
-st.subheader("📋 完整歷史數據")
-
-tab1, tab2, tab3 = st.tabs(["📅 日線數據", "📅 週線數據", "📅 月線數據"])
-
-with tab1:
-    st.caption(f"共 {len(daily_df)} 筆資料")
-    display_daily = daily_df.copy()
-    display_daily['日期'] = display_daily['日期'].dt.strftime('%Y-%m-%d')
-    display_daily['升跌（%）'] = display_daily['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
-    display_daily['收市'] = display_daily['收市'].apply(lambda x: f"${x:,.2f}")
-    display_daily['開市'] = display_daily['開市'].apply(lambda x: f"${x:,.2f}")
-    display_daily['高'] = display_daily['高'].apply(lambda x: f"${x:,.2f}")
-    display_daily['低'] = display_daily['低'].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(
-        display_daily[['日期', '收市', '開市', '高', '低', '升跌（%）']],
-        use_container_width=True,
-        hide_index=True,
-        height=500
-    )
-
-with tab2:
-    st.caption(f"共 {len(weekly_df)} 筆資料")
-    display_weekly = weekly_df.copy()
-    display_weekly['日期'] = display_weekly['日期'].dt.strftime('%Y-%m-%d')
-    display_weekly['升跌（%）'] = display_weekly['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
-    display_weekly['收市'] = display_weekly['收市'].apply(lambda x: f"${x:,.2f}")
-    display_weekly['開市'] = display_weekly['開市'].apply(lambda x: f"${x:,.2f}")
-    display_weekly['高'] = display_weekly['高'].apply(lambda x: f"${x:,.2f}")
-    display_weekly['低'] = display_weekly['低'].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(
-        display_weekly[['日期', '收市', '開市', '高', '低', '升跌（%）']],
-        use_container_width=True,
-        hide_index=True,
-        height=500
-    )
-
-with tab3:
-    st.caption(f"共 {len(monthly_df)} 筆資料")
-    display_monthly = monthly_df.copy()
-    display_monthly['日期'] = display_monthly['日期'].dt.strftime('%Y-%m-%d')
-    display_monthly['升跌（%）'] = display_monthly['升跌（%）'].apply(lambda x: f"{x:+.2f}%")
-    display_monthly['收市'] = display_monthly['收市'].apply(lambda x: f"${x:,.2f}")
-    display_monthly['開市'] = display_monthly['開市'].apply(lambda x: f"${x:,.2f}")
-    display_monthly['高'] = display_monthly['高'].apply(lambda x: f"${x:,.2f}")
-    display_monthly['低'] = display_monthly['低'].apply(lambda x: f"${x:,.2f}")
-    st.dataframe(
-        display_monthly[['日期', '收市', '開市', '高', '低', '升跌（%）']],
-        use_container_width=True,
-        hide_index=True,
-        height=500
-    )
+# ---- 倫敦金現貨 最大漲跌幅 ----
+show_max_gain_loss(
+    "倫敦金現貨 (XAU/USD)",
+    s_d_gain, s_d_gain_date, s_d_loss, s_d_loss_date,
+    s_w_gain, s_w_gain_date, s_w_loss, s_w_loss_date,
+    s_m_gain, s_m_gain_date, s_m_loss, s_m_loss_date
+)
 
 st.markdown("---")
 
+# ---- COMEX 期貨 數據表 ----
+show_data_tabs(futures_daily, futures_weekly, futures_monthly, "COMEX 黃金期貨")
 
-# ========== 走勢圖 ==========
-st.subheader("📈 收市價走勢圖")
+st.markdown("---")
 
-chart_col1, chart_col2, chart_col3 = st.columns(3)
+# ---- 倫敦金現貨 數據表 ----
+show_data_tabs(spot_daily, spot_weekly, spot_monthly, "倫敦金現貨 (XAU/USD)")
 
-with chart_col1:
-    st.markdown("**日線**")
-    st.line_chart(daily_df.set_index('日期')['收市'])
+st.markdown("---")
 
-with chart_col2:
-    st.markdown("**週線**")
-    st.line_chart(weekly_df.set_index('日期')['收市'])
+# ---- COMEX 期貨 走勢圖 ----
+show_charts(futures_daily, futures_weekly, futures_monthly, "COMEX 黃金期貨")
 
-with chart_col3:
-    st.markdown("**月線**")
-    st.line_chart(monthly_df.set_index('日期')['收市'])
+st.markdown("---")
+
+# ---- 倫敦金現貨 走勢圖 ----
+show_charts(spot_daily, spot_weekly, spot_monthly, "倫敦金現貨 (XAU/USD)")
