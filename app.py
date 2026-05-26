@@ -305,6 +305,48 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df, label="上海金�
             fallback_count = len(display) - historical_count
             st.caption(f"🔵 歷史匯率: {historical_count} 筆 | 🟡 即時匯率備用: {fallback_count} 筆")
 
+def show_data_tabs_sge_vs_sge(data_dict, reference_df, label="Au(T+D)", ref_label="上海金現貨"):
+    """國內金數據表：價格用括號附上對參考品種的%差距（CNY/克直接對比）"""
+    st.subheader(f"📋 {label} — 完整歷史數據")
+    st.caption("📡 數據來源：上海黃金交易所")
+    tab_labels = list(data_dict.keys())
+    tabs = st.tabs([f"📅 {t}" for t in tab_labels])
+    for tab, (period_name, df) in zip(tabs, data_dict.items()):
+        with tab:
+            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 括號內為對{ref_label}的%差距 | 由新至舊排列")
+
+            ref_dict = reference_df.set_index('日期')['收市'].to_dict()
+
+            display = df.copy()
+            display['日期_str'] = display['日期'].dt.strftime('%Y-%m-%d')
+
+            def build_price_cell(price, date_obj):
+                ref_price = None
+                check_date = date_obj
+                for _ in range(5):
+                    ref_price = ref_dict.get(check_date)
+                    if ref_price is not None:
+                        break
+                    check_date = check_date - timedelta(days=1)
+                if ref_price and ref_price != 0:
+                    diff_pct = (price - ref_price) / ref_price * 100
+                    diff_str = fmt_pct_plain(diff_pct)
+                    return f"¥{price:,.2f} ({diff_str})"
+                else:
+                    return f"¥{price:,.2f}"
+
+            display['收市'] = display.apply(lambda row: build_price_cell(row['收市'], row['日期']), axis=1)
+            display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期']), axis=1)
+            display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期']), axis=1)
+            display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期']), axis=1)
+            display['升跌（%）'] = display['升跌（%）'].apply(lambda x: fmt_pct_plain(x))
+
+            st.dataframe(
+                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）']],
+                use_container_width=True, hide_index=True, height=500,
+                column_config={'日期_str': '日期'}
+            )
+
 def get_common_dates(df1, df2):
     s1 = df1.set_index('日期')['收市']
     s2 = df2.set_index('日期')['收市']
@@ -389,7 +431,34 @@ if metal_choice == "🥇 黃金":
     col_td, col_td_session = st.columns([3, 1])
     with col_td:
         st.markdown("### Au(T+D) 黃金延期")
-        show_latest_metrics_sge(sge_td_daily.iloc[0], spot_daily.iloc[0]['收市'], "Au(T+D)")
+        # Au(T+D) 跟上海金現貨比較
+        sge_ref_price = sge_daily.iloc[0]['收市']
+        td_price = sge_td_daily.iloc[0]['收市']
+        td_diff_pct = ((td_price - sge_ref_price) / sge_ref_price * 100) if sge_ref_price else 0
+
+        if td_diff_pct > 0:
+            td_diff_color = "#22C55E"
+        elif td_diff_pct < 0:
+            td_diff_color = "#EF4444"
+        else:
+            td_diff_color = "#9CA3AF"
+
+        col_td_date, col_td_close, col_td_diff, col_td_change = st.columns([1.2, 1, 1, 0.8])
+        with col_td_date:
+            st.metric(label="最新交易日", value=format_date(sge_td_daily.iloc[0]['日期']))
+        with col_td_close:
+            st.metric(label="收市價 (CNY/克)", value=f"¥{td_price:,.2f}")
+        with col_td_diff:
+            st.markdown(f"""
+            <div style="margin-top: 8px;">
+                <span style="font-size: 0.75rem; color: #9CA3AF;">對上海金現貨</span><br>
+                <span style="font-size: 1.5rem; font-weight: 700; color: {td_diff_color};">{td_diff_pct:+.2f}%</span>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_td_change:
+            st.metric(label="當日漲跌幅", value=fmt_pct_delta(sge_td_daily.iloc[0]['升跌（%）'], include_color=False))
+        st.caption(f"上海金現貨參考價: ¥{sge_ref_price:,.2f}/克")
+
     with col_td_session:
         st.markdown("### 🕐 交易時段")
         st.markdown("""
@@ -440,7 +509,7 @@ if metal_choice == "🥇 黃金":
     st.markdown("---")
     show_data_tabs_sge({"日線": sge_daily, "週線": sge_weekly}, current_rate, spot_daily, "上海金現貨 (Au99.99)")
     st.markdown("---")
-    show_data_tabs_sge({"日線": sge_td_daily, "週線": sge_td_weekly}, current_rate, spot_daily, "Au(T+D) 黃金延期")
+    show_data_tabs_sge_vs_sge({"日線": sge_td_daily, "週線": sge_td_weekly}, sge_daily, "Au(T+D) 黃金延期", "上海金現貨")
     st.markdown("---")
 
     # ============================================================
@@ -507,48 +576,61 @@ if metal_choice == "🥇 黃金":
 
     st.markdown("---")
 
-    # ---- Au(T+D) vs 倫敦金 ----
-    st.subheader("Au(T+D) (使用當日歷史匯率換算 USD/盎司) vs 倫敦金現貨")
-
-    sge_td_daily_with_rate = sge_td_daily.copy()
-    sge_td_daily_rates = sge_td_daily_with_rate['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
-    sge_td_daily_with_rate['rate'] = sge_td_daily_rates.apply(lambda x: x[0])
-    sge_td_daily_with_rate['rate_source'] = sge_td_daily_rates.apply(lambda x: x[1])
-    sge_td_daily_with_rate['收市_USD'] = sge_td_daily_with_rate.apply(
-        lambda row: cny_per_gram_to_usd_per_ounce(row['收市'], row['rate']), axis=1
-    )
+    # ---- Au(T+D) vs 上海金現貨 ----
+    st.subheader("Au(T+D) vs 上海金現貨 (CNY/克 直接對比)")
 
     td1, td2 = st.columns(2)
     with td1:
         st.markdown("**日線對比**")
-        sge_td_daily_usd_series = sge_td_daily_with_rate.set_index('日期')['收市_USD']
-        s1, s2 = get_common_dates_by_series(sge_td_daily_usd_series, spot_daily_s)
-        common_dates = s1.index
-        rate_sources = sge_td_daily_with_rate.set_index('日期').loc[common_dates, 'rate_source']
-        hist_count = (rate_sources == '歷史匯率').sum()
-        curr_count = (rate_sources == '即時匯率').sum()
-        st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count} 日 | 🟡 即時匯率 {curr_count} 日")
-        st.line_chart(pd.DataFrame({'Au(T+D) (USD/盎司)': s1, '倫敦金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
-
+        s1, s2 = get_common_dates(sge_td_daily, sge_daily)
+        st.line_chart(pd.DataFrame({'Au(T+D)': s1, '上海金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
     with td2:
         st.markdown("**週線對比**")
-        s1_w, s2_w = get_common_dates(sge_td_weekly, spot_weekly)
-        s1_w_usd_list = []
-        s1_w_rate_sources = []
-        for idx, val in s1_w.items():
-            rate, source = get_rate_for_date(idx, current_rate)
-            s1_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
-            s1_w_rate_sources.append(source)
-        s1_w_usd = pd.Series(s1_w_usd_list, index=s1_w.index)
-        hist_count_w = sum(1 for s in s1_w_rate_sources if s == '歷史匯率')
-        curr_count_w = len(s1_w_rate_sources) - hist_count_w
-        st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w} 週 | 🟡 即時匯率 {curr_count_w} 週")
-        st.line_chart(pd.DataFrame({'Au(T+D) (USD/盎司)': s1_w_usd, '倫敦金現貨': s2_w}).sort_index(), color=["#E63946", "#004E89"])
+        s1, s2 = get_common_dates(sge_td_weekly, sge_weekly)
+        st.line_chart(pd.DataFrame({'Au(T+D)': s1, '上海金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
+
+    st.markdown("---")
+
+    # ---- Au(T+D) 價差% 走勢圖 ----
+    st.subheader("📈 Au(T+D) vs 上海金現貨 — 價差% 走勢圖")
+    st.caption("價差% = (Au(T+D) - 上海金現貨) / 上海金現貨 × 100%")
+
+    s1_td_all, s2_td_all = get_common_dates(sge_td_daily, sge_daily)
+    td_diff_series = ((s1_td_all - s2_td_all) / s2_td_all) * 100
+
+    td_diff_col1, td_diff_col2 = st.columns(2)
+
+    with td_diff_col1:
+        st.markdown("**日線價差%**")
+        st.line_chart(td_diff_series.rename('價差%'))
+
+    with td_diff_col2:
+        st.markdown("**週線價差%**")
+        s1_td_w, s2_td_w = get_common_dates(sge_td_weekly, sge_weekly)
+        td_diff_w = ((s1_td_w - s2_td_w) / s2_td_w) * 100
+        st.line_chart(td_diff_w.rename('價差%'))
+
+    st.markdown("---")
+    st.subheader("📊 價差% 統計摘要")
+
+    stat_td_col1, stat_td_col2 = st.columns(2)
+
+    with stat_td_col1:
+        st.markdown("**日線價差統計**")
+        st.metric(label="最高溢價", value=fmt_pct(td_diff_series.max()))
+        st.metric(label="最低溢價（最深折價）", value=fmt_pct(td_diff_series.min()))
+        st.metric(label="平均溢價", value=fmt_pct(td_diff_series.mean()))
+
+    with stat_td_col2:
+        st.markdown("**週線價差統計**")
+        st.metric(label="最高溢價", value=fmt_pct(td_diff_w.max()))
+        st.metric(label="最低溢價（最深折價）", value=fmt_pct(td_diff_w.min()))
+        st.metric(label="平均溢價", value=fmt_pct(td_diff_w.mean()))
 
     st.markdown("---")
 
     # ============================================================
-    # 第五部分：溢價% 走勢圖（上海金現貨）
+    # 第五部分：溢價% 走勢圖（上海金現貨 vs 國際金）
     # ============================================================
     st.header("📈 上海金現貨 vs 國際金 — 溢價% 走勢圖")
     st.caption("溢價% = (上海金換算USD/盎司 - 倫敦金現貨USD/盎司) / 倫敦金現貨USD/盎司 × 100%")
@@ -609,70 +691,6 @@ if metal_choice == "🥇 黃金":
         st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_w.min()))
         st.metric(label="平均溢價", value=fmt_pct(premium_w.mean()))
 
-    st.markdown("---")
-
-    # ============================================================
-    # 第六部分：Au(T+D) 溢價% 走勢圖
-    # ============================================================
-    st.header("📈 Au(T+D) vs 國際金 — 溢價% 走勢圖")
-    st.caption("溢價% = (Au(T+D)換算USD/盎司 - 倫敦金現貨USD/盎司) / 倫敦金現貨USD/盎司 × 100%")
-
-    sge_td_daily_all = sge_td_daily.copy()
-    sge_td_daily_all_rates = sge_td_daily_all['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
-    sge_td_daily_all['rate'] = sge_td_daily_all_rates.apply(lambda x: x[0])
-    sge_td_daily_all['rate_source'] = sge_td_daily_all_rates.apply(lambda x: x[1])
-    sge_td_daily_all['收市_USD'] = sge_td_daily_all.apply(
-        lambda row: cny_per_gram_to_usd_per_ounce(row['收市'], row['rate']), axis=1
-    )
-
-    sge_td_daily_usd_all = sge_td_daily_all.set_index('日期')['收市_USD']
-    s1_td_all, s2_td_all = get_common_dates_by_series(sge_td_daily_usd_all, spot_daily_s)
-    premium_td_series = ((s1_td_all - s2_td_all) / s2_td_all) * 100
-
-    premium_td_col1, premium_td_col2 = st.columns(2)
-
-    with premium_td_col1:
-        st.markdown("**日線溢價%**")
-        common_dates_td_all = s1_td_all.index
-        rate_sources_td_all = sge_td_daily_all.set_index('日期').loc[common_dates_td_all, 'rate_source']
-        hist_count_td_all = (rate_sources_td_all == '歷史匯率').sum()
-        curr_count_td_all = (rate_sources_td_all == '即時匯率').sum()
-        st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_td_all} 日 | 🟡 即時匯率 {curr_count_td_all} 日")
-        st.line_chart(premium_td_series.rename('溢價%'))
-
-    with premium_td_col2:
-        st.markdown("**週線溢價%**")
-        s1_td_w, s2_td_w = get_common_dates(sge_td_weekly, spot_weekly)
-        s1_td_w_usd_list = []
-        s1_td_w_rate_sources = []
-        for idx, val in s1_td_w.items():
-            rate, source = get_rate_for_date(idx, current_rate)
-            s1_td_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
-            s1_td_w_rate_sources.append(source)
-        s1_td_w_usd = pd.Series(s1_td_w_usd_list, index=s1_td_w.index)
-        premium_td_w = ((s1_td_w_usd - s2_td_w) / s2_td_w) * 100
-        hist_count_td_w = sum(1 for s in s1_td_w_rate_sources if s == '歷史匯率')
-        curr_count_td_w = len(s1_td_w_rate_sources) - hist_count_td_w
-        st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_td_w} 週 | 🟡 即時匯率 {curr_count_td_w} 週")
-        st.line_chart(premium_td_w.rename('溢價%'))
-
-    st.markdown("---")
-    st.subheader("📊 溢價% 統計摘要")
-
-    stat_td_col1, stat_td_col2 = st.columns(2)
-
-    with stat_td_col1:
-        st.markdown("**日線溢價統計**")
-        st.metric(label="最高溢價", value=fmt_pct(premium_td_series.max()))
-        st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_td_series.min()))
-        st.metric(label="平均溢價", value=fmt_pct(premium_td_series.mean()))
-
-    with stat_td_col2:
-        st.markdown("**週線溢價統計**")
-        st.metric(label="最高溢價", value=fmt_pct(premium_td_w.max()))
-        st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_td_w.min()))
-        st.metric(label="平均溢價", value=fmt_pct(premium_td_w.mean()))
-
 
 # ============================================================
 # 白銀區塊（獨立完整程式碼）
@@ -682,9 +700,6 @@ elif metal_choice == "🥈 白銀":
     st.caption("COMEX 白銀期貨 + 倫敦銀現貨 (XAG/USD)")
     st.caption("白銀為美元計價，無需匯率換算")
 
-    # ============================================================
-    # 第一部分：最新報價
-    # ============================================================
     st.header("📌 最新報價")
 
     col_futures, col_futures_session = st.columns([3, 1])
@@ -717,9 +732,6 @@ elif metal_choice == "🥈 白銀":
 
     st.markdown("---")
 
-    # ============================================================
-    # 第二部分：最大漲跌幅總覽
-    # ============================================================
     st.header("📊 最大漲跌幅總覽")
 
     show_max_gain_loss_section("COMEX 白銀期貨", [
@@ -735,9 +747,6 @@ elif metal_choice == "🥈 白銀":
     ])
     st.markdown("---")
 
-    # ============================================================
-    # 第三部分：完整歷史數據
-    # ============================================================
     st.header("📋 完整歷史數據")
 
     show_data_tabs(
@@ -751,9 +760,6 @@ elif metal_choice == "🥈 白銀":
     )
     st.markdown("---")
 
-    # ============================================================
-    # 第四部分：走勢圖
-    # ============================================================
     st.header("📈 收市價走勢圖（只顯示共同交易日的數據）")
 
     st.subheader("COMEX 白銀期貨 vs 倫敦銀現貨 (XAG/USD)")
