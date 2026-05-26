@@ -627,7 +627,7 @@ if metal_choice == "🥇 黃金":
         else:
             td_rate_label = f"🟡 {td_rate_source}"
 
-        col_td_date, col_td_close, col_td_usd, col_td_diff, col_td_change = st.columns([1, 1, 1, 1, 0.8])
+        col_td_date, col_td_close, col_td_usd, col_td_diff, col_td_change = st.columns([1.2, 1, 1, 1, 0.8])
         with col_td_date:
             st.metric(label="最新交易日", value=format_date(td_date))
         with col_td_close:
@@ -944,7 +944,7 @@ elif metal_choice == "🥈 白銀":
         else:
             ag_td_rate_label = f"🟡 {ag_td_rate_source}"
 
-        col_ag_td_date, col_ag_td_close, col_ag_td_usd, col_ag_td_diff, col_ag_td_change = st.columns([1, 1, 1, 1, 0.8])
+        col_ag_td_date, col_ag_td_close, col_ag_td_usd, col_ag_td_diff, col_ag_td_change = st.columns([1.2, 1, 1, 1, 0.8])
         with col_ag_td_date:
             st.metric(label="最新交易日", value=format_date(ag_td_date))
         with col_ag_td_close:
