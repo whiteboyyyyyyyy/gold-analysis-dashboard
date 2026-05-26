@@ -305,47 +305,44 @@ def show_data_tabs_sge(data_dict, current_rate, spot_daily_df, label="上海金�
             fallback_count = len(display) - historical_count
             st.caption(f"🔵 歷史匯率: {historical_count} 筆 | 🟡 即時匯率備用: {fallback_count} 筆")
 
-def show_data_tabs_sge_vs_sge(data_dict, reference_df, label="Au(T+D)", ref_label="上海金現貨"):
-    """國內金數據表：價格用括號附上對參考品種的%差距（CNY/克直接對比）"""
+def show_data_tabs_sge_td(data_dict, current_rate, label="Au(T+D) 黃金延期"):
+    """Au(T+D)數據表：價格用括號附上換算USD/盎司（使用當日歷史匯率）"""
     st.subheader(f"📋 {label} — 完整歷史數據")
     st.caption("📡 數據來源：上海黃金交易所")
     tab_labels = list(data_dict.keys())
     tabs = st.tabs([f"📅 {t}" for t in tab_labels])
     for tab, (period_name, df) in zip(tabs, data_dict.items()):
         with tab:
-            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 括號內為對{ref_label}的%差距 | 由新至舊排列")
+            st.caption(f"{label} {period_name} — 共 {len(df)} 筆資料 | 數據來源：上海黃金交易所 | 括號內為換算USD/盎司 | 由新至舊排列")
 
-            ref_dict = reference_df.set_index('日期')['收市'].to_dict()
+            rates_info = df['日期'].apply(lambda d: get_rate_for_date(d, current_rate))
+            df['換算匯率'] = rates_info.apply(lambda x: x[0])
+            df['匯率來源'] = rates_info.apply(lambda x: x[1])
 
             display = df.copy()
             display['日期_str'] = display['日期'].dt.strftime('%Y-%m-%d')
 
-            def build_price_cell(price, date_obj):
-                ref_price = None
-                check_date = date_obj
-                for _ in range(5):
-                    ref_price = ref_dict.get(check_date)
-                    if ref_price is not None:
-                        break
-                    check_date = check_date - timedelta(days=1)
-                if ref_price and ref_price != 0:
-                    diff_pct = (price - ref_price) / ref_price * 100
-                    diff_str = fmt_pct_plain(diff_pct)
-                    return f"¥{price:,.2f} ({diff_str})"
-                else:
-                    return f"¥{price:,.2f}"
+            def build_price_cell(price_cny, date_obj, rate):
+                usd = cny_per_gram_to_usd_per_ounce(price_cny, rate)
+                return f"¥{price_cny:,.2f} (${usd:,.2f})"
 
-            display['收市'] = display.apply(lambda row: build_price_cell(row['收市'], row['日期']), axis=1)
-            display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期']), axis=1)
-            display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期']), axis=1)
-            display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期']), axis=1)
+            display['收市'] = display.apply(lambda row: build_price_cell(row['收市'], row['日期'], row['換算匯率']), axis=1)
+            display['開市'] = display.apply(lambda row: build_price_cell(row['開市'], row['日期'], row['換算匯率']), axis=1)
+            display['高'] = display.apply(lambda row: build_price_cell(row['高'], row['日期'], row['換算匯率']), axis=1)
+            display['低'] = display.apply(lambda row: build_price_cell(row['低'], row['日期'], row['換算匯率']), axis=1)
             display['升跌（%）'] = display['升跌（%）'].apply(lambda x: fmt_pct_plain(x))
+            display['換算匯率'] = display['換算匯率'].apply(lambda x: f"{x:.4f}")
+            display['匯率來源'] = display['匯率來源'].apply(lambda x: f"{'🔵' if x == '歷史匯率' else '🟡'} {x}")
 
             st.dataframe(
-                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）']],
+                display[['日期_str', '收市', '開市', '高', '低', '升跌（%）', '換算匯率', '匯率來源']],
                 use_container_width=True, hide_index=True, height=500,
                 column_config={'日期_str': '日期'}
             )
+
+            historical_count = display['匯率來源'].str.contains('歷史匯率').sum()
+            fallback_count = len(display) - historical_count
+            st.caption(f"🔵 歷史匯率: {historical_count} 筆 | 🟡 即時匯率備用: {fallback_count} 筆")
 
 def get_common_dates(df1, df2):
     s1 = df1.set_index('日期')['收市']
@@ -535,7 +532,7 @@ if metal_choice == "🥇 黃金":
     st.markdown("---")
     show_data_tabs_sge({"日線": sge_daily, "週線": sge_weekly}, current_rate, spot_daily, "上海金現貨 (Au99.99)")
     st.markdown("---")
-    show_data_tabs_sge_vs_sge({"日線": sge_td_daily, "週線": sge_td_weekly}, sge_daily, "Au(T+D) 黃金延期", "上海金現貨")
+    show_data_tabs_sge_td({"日線": sge_td_daily, "週線": sge_td_weekly}, current_rate, "Au(T+D) 黃金延期")
     st.markdown("---")
 
     # ============================================================
