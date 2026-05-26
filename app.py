@@ -457,6 +457,9 @@ if metal_choice == "🥇 黃金":
         st.markdown("### Au(T+D) 黃金延期")
         sge_ref_price = sge_daily.iloc[0]['收市']
         td_price = sge_td_daily.iloc[0]['收市']
+        td_date = sge_td_daily.iloc[0]['日期']
+        td_rate, td_rate_source = get_rate_for_date(td_date, current_rate)
+        td_usd_price = cny_per_gram_to_usd_per_ounce(td_price, td_rate)
         td_diff_pct = ((td_price - sge_ref_price) / sge_ref_price * 100) if sge_ref_price else 0
 
         if td_diff_pct > 0:
@@ -466,11 +469,18 @@ if metal_choice == "🥇 黃金":
         else:
             td_diff_color = "#9CA3AF"
 
-        col_td_date, col_td_close, col_td_diff, col_td_change = st.columns([1.2, 1, 1, 0.8])
+        if td_rate_source == "歷史匯率":
+            td_rate_label = f"🔵 {td_rate_source}"
+        else:
+            td_rate_label = f"🟡 {td_rate_source}"
+
+        col_td_date, col_td_close, col_td_usd, col_td_diff, col_td_change = st.columns([1, 1, 1, 1, 0.8])
         with col_td_date:
-            st.metric(label="最新交易日", value=format_date(sge_td_daily.iloc[0]['日期']))
+            st.metric(label="最新交易日", value=format_date(td_date))
         with col_td_close:
             st.metric(label="收市價 (CNY/克)", value=f"¥{td_price:,.2f}")
+        with col_td_usd:
+            st.metric(label="換算 USD/盎司", value=f"${td_usd_price:,.2f}")
         with col_td_diff:
             st.markdown(f"""
             <div style="margin-top: 8px;">
@@ -480,7 +490,7 @@ if metal_choice == "🥇 黃金":
             """, unsafe_allow_html=True)
         with col_td_change:
             st.metric(label="當日漲跌幅", value=fmt_pct_delta(sge_td_daily.iloc[0]['升跌（%）'], include_color=False))
-        st.caption(f"上海金現貨參考價: ¥{sge_ref_price:,.2f}/克")
+        st.caption(f"💱 換算匯率: USD/CNY = {td_rate:.4f} ({td_rate_label}) | 上海金現貨參考價: ¥{sge_ref_price:,.2f}/克")
 
     with col_td_session:
         st.markdown("### 🕐 交易時段")
