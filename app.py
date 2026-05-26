@@ -357,6 +357,21 @@ def get_common_dates_by_series(s1, s2):
     common = s1.index.intersection(s2.index)
     return s1.loc[common], s2.loc[common]
 
+def get_common_dates_by_str(df1, df2):
+    """用日期字串比對，確保一致性"""
+    d1 = df1.copy()
+    d1['日期_str'] = d1['日期'].dt.strftime('%Y-%m-%d')
+    d2 = df2.copy()
+    d2['日期_str'] = d2['日期'].dt.strftime('%Y-%m-%d')
+
+    dict1 = d1.set_index('日期_str')['收市'].to_dict()
+    dict2 = d2.set_index('日期_str')['收市'].to_dict()
+
+    common_keys = sorted(set(dict1.keys()) & set(dict2.keys()))
+    s1 = pd.Series({k: dict1[k] for k in common_keys})
+    s2 = pd.Series({k: dict2[k] for k in common_keys})
+    return s1, s2
+
 
 # ============================================================
 # 側邊欄切換
@@ -544,7 +559,6 @@ if metal_choice == "🥇 黃金":
     )
 
     spot_daily_s = spot_daily.set_index('日期')['收市']
-    spot_weekly_s = spot_weekly.set_index('日期')['收市']
 
     d1, d2 = st.columns(2)
     with d1:
@@ -563,19 +577,22 @@ if metal_choice == "🥇 黃金":
 
     with d2:
         st.markdown("**週線對比**")
-        # CSV已預先對齊至週日，直接用 get_common_dates
-        s1_w, s2_w = get_common_dates(sge_weekly, spot_weekly)
+        # 用日期字串比對確保一致性
+        s1_w, s2_w = get_common_dates_by_str(sge_weekly, spot_weekly)
         if len(s1_w) > 0:
             s1_w_usd_list = []
             s1_w_rate_sources = []
-            for idx, val in s1_w.items():
-                rate, source = get_rate_for_date(idx, current_rate)
-                s1_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
+            for k in s1_w.index:
+                val_cny = s1_w[k]
+                d = datetime.strptime(k, '%Y-%m-%d')
+                rate, source = get_rate_for_date(d, current_rate)
+                s1_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val_cny, rate))
                 s1_w_rate_sources.append(source)
             s1_w_usd = pd.Series(s1_w_usd_list, index=s1_w.index)
+            s2_w.index = s2_w.index.astype(str)
             hist_count_w = sum(1 for s in s1_w_rate_sources if s == '歷史匯率')
             curr_count_w = len(s1_w_rate_sources) - hist_count_w
-            st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w} 週 | 🟡 即時匯率 {curr_count_w} 週")
+            st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w} 週 | 🟡 即時匯率 {curr_count_w} 週 | 共同週數: {len(s1_w)}")
             st.line_chart(pd.DataFrame({'上海金 (USD/盎司)': s1_w_usd, '倫敦金現貨': s2_w}).sort_index(), color=["#E63946", "#004E89"])
         else:
             st.warning("週線無共同日期")
@@ -594,44 +611,6 @@ if metal_choice == "🥇 黃金":
         st.markdown("**週線對比**")
         s1, s2 = get_common_dates(sge_td_weekly, sge_weekly)
         st.line_chart(pd.DataFrame({'Au(T+D)': s1, '上海金現貨': s2}).sort_index(), color=["#E63946", "#004E89"])
-
-    st.markdown("---")
-
-    # ---- Au(T+D) 價差% 走勢圖 ----
-    st.subheader("📈 Au(T+D) vs 上海金現貨 — 價差% 走勢圖")
-    st.caption("價差% = (Au(T+D) - 上海金現貨) / 上海金現貨 × 100%")
-
-    s1_td_all, s2_td_all = get_common_dates(sge_td_daily, sge_daily)
-    td_diff_series = ((s1_td_all - s2_td_all) / s2_td_all) * 100
-
-    td_diff_col1, td_diff_col2 = st.columns(2)
-
-    with td_diff_col1:
-        st.markdown("**日線價差%**")
-        st.line_chart(td_diff_series.rename('價差%'))
-
-    with td_diff_col2:
-        st.markdown("**週線價差%**")
-        s1_td_w, s2_td_w = get_common_dates(sge_td_weekly, sge_weekly)
-        td_diff_w = ((s1_td_w - s2_td_w) / s2_td_w) * 100
-        st.line_chart(td_diff_w.rename('價差%'))
-
-    st.markdown("---")
-    st.subheader("📊 價差% 統計摘要")
-
-    stat_td_col1, stat_td_col2 = st.columns(2)
-
-    with stat_td_col1:
-        st.markdown("**日線價差統計**")
-        st.metric(label="最高溢價", value=fmt_pct(td_diff_series.max()))
-        st.metric(label="最低溢價（最深折價）", value=fmt_pct(td_diff_series.min()))
-        st.metric(label="平均溢價", value=fmt_pct(td_diff_series.mean()))
-
-    with stat_td_col2:
-        st.markdown("**週線價差統計**")
-        st.metric(label="最高溢價", value=fmt_pct(td_diff_w.max()))
-        st.metric(label="最低溢價（最深折價）", value=fmt_pct(td_diff_w.min()))
-        st.metric(label="平均溢價", value=fmt_pct(td_diff_w.mean()))
 
     st.markdown("---")
 
@@ -669,23 +648,26 @@ if metal_choice == "🥇 黃金":
 
     with premium_col2:
         st.markdown("**週線溢價%**")
-        # CSV已預先對齊至週日，直接用 get_common_dates
-        s1_w, s2_w = get_common_dates(sge_weekly, spot_weekly)
-        if len(s1_w) > 0:
-            s1_w_usd_list = []
-            s1_w_rate_sources = []
-            for idx, val in s1_w.items():
-                rate, source = get_rate_for_date(idx, current_rate)
-                s1_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
-                s1_w_rate_sources.append(source)
-            s1_w_usd = pd.Series(s1_w_usd_list, index=s1_w.index)
-            premium_w = ((s1_w_usd - s2_w) / s2_w) * 100
-            hist_count_w = sum(1 for s in s1_w_rate_sources if s == '歷史匯率')
-            curr_count_w = len(s1_w_rate_sources) - hist_count_w
-            st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w} 週 | 🟡 即時匯率 {curr_count_w} 週")
+        s1_w_p, s2_w_p = get_common_dates_by_str(sge_weekly, spot_weekly)
+        if len(s1_w_p) > 0:
+            s1_w_usd_list_p = []
+            s1_w_rate_sources_p = []
+            for k in s1_w_p.index:
+                val_cny = s1_w_p[k]
+                d = datetime.strptime(k, '%Y-%m-%d')
+                rate, source = get_rate_for_date(d, current_rate)
+                s1_w_usd_list_p.append(cny_per_gram_to_usd_per_ounce(val_cny, rate))
+                s1_w_rate_sources_p.append(source)
+            s1_w_usd_p = pd.Series(s1_w_usd_list_p, index=s1_w_p.index)
+            s2_w_p.index = s2_w_p.index.astype(str)
+            premium_w = ((s1_w_usd_p - s2_w_p) / s2_w_p) * 100
+            hist_count_w2 = sum(1 for s in s1_w_rate_sources_p if s == '歷史匯率')
+            curr_count_w2 = len(s1_w_rate_sources_p) - hist_count_w2
+            st.caption(f"換算匯率: 🔵 歷史匯率 {hist_count_w2} 週 | 🟡 即時匯率 {curr_count_w2} 週 | 共同週數: {len(s1_w_p)}")
             st.line_chart(premium_w.rename('溢價%'))
         else:
             st.warning("週線無共同日期")
+            premium_w = pd.Series(dtype=float)
 
     st.markdown("---")
     st.subheader("📊 溢價% 統計摘要")
@@ -700,7 +682,7 @@ if metal_choice == "🥇 黃金":
 
     with stat_col2:
         st.markdown("**週線溢價統計**")
-        if len(s1_w) > 0:
+        if len(premium_w) > 0:
             st.metric(label="最高溢價", value=fmt_pct(premium_w.max()))
             st.metric(label="最低溢價（最深折價）", value=fmt_pct(premium_w.min()))
             st.metric(label="平均溢價", value=fmt_pct(premium_w.mean()))
