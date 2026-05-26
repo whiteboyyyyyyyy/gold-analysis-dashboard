@@ -357,21 +357,30 @@ def get_common_dates_by_series(s1, s2):
     common = s1.index.intersection(s2.index)
     return s1.loc[common], s2.loc[common]
 
+def make_date_key(date_val):
+    """把任何日期轉成 YYYY-MM-DD 字串"""
+    if isinstance(date_val, pd.Timestamp):
+        return date_val.strftime('%Y-%m-%d')
+    elif isinstance(date_val, datetime):
+        return date_val.strftime('%Y-%m-%d')
+    else:
+        return str(date_val)[:10]
+
 def get_common_dates_safe(df1, df2):
     """用日期字串比對，確保萬無一失"""
     d1 = df1[['日期', '收市']].copy()
     d2 = df2[['日期', '收市']].copy()
 
-    d1['key'] = d1['日期'].apply(lambda x: f"{x.year}-{x.month:02d}-{x.day:02d}")
-    d2['key'] = d2['日期'].apply(lambda x: f"{x.year}-{x.month:02d}-{x.day:02d}")
+    d1['key'] = d1['日期'].apply(make_date_key)
+    d2['key'] = d2['日期'].apply(make_date_key)
 
     common_keys = set(d1['key']) & set(d2['key'])
 
-    s1_dict = d1.set_index('key')['收市'].to_dict()
-    s2_dict = d2.set_index('key')['收市'].to_dict()
+    s1_dict = dict(zip(d1['key'], d1['收市']))
+    s2_dict = dict(zip(d2['key'], d2['收市']))
 
-    s1 = pd.Series({k: s1_dict[k] for k in common_keys})
-    s2 = pd.Series({k: s2_dict[k] for k in common_keys})
+    s1 = pd.Series({k: s1_dict[k] for k in sorted(common_keys)})
+    s2 = pd.Series({k: s2_dict[k] for k in sorted(common_keys)})
 
     return s1, s2
 
@@ -585,7 +594,8 @@ if metal_choice == "🥇 黃金":
             s1_w_usd_list = []
             s1_w_rate_sources = []
             for idx, val in s1_w.items():
-                rate, source = get_rate_for_date(datetime.strptime(idx, '%Y-%m-%d'), current_rate)
+                d = datetime.strptime(idx, '%Y-%m-%d')
+                rate, source = get_rate_for_date(d, current_rate)
                 s1_w_usd_list.append(cny_per_gram_to_usd_per_ounce(val, rate))
                 s1_w_rate_sources.append(source)
             s1_w_usd = pd.Series(s1_w_usd_list, index=s1_w.index)
@@ -652,7 +662,8 @@ if metal_choice == "🥇 黃金":
             s1_w_usd_list_p = []
             s1_w_rate_sources_p = []
             for idx, val in s1_w_p.items():
-                rate, source = get_rate_for_date(datetime.strptime(idx, '%Y-%m-%d'), current_rate)
+                d = datetime.strptime(idx, '%Y-%m-%d')
+                rate, source = get_rate_for_date(d, current_rate)
                 s1_w_usd_list_p.append(cny_per_gram_to_usd_per_ounce(val, rate))
                 s1_w_rate_sources_p.append(source)
             s1_w_usd_p = pd.Series(s1_w_usd_list_p, index=s1_w_p.index)
